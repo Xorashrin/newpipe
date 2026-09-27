@@ -78,6 +78,7 @@ import org.schabi.newpipe.util.NavigationHelper;
 import org.schabi.newpipe.util.PermissionHelper;
 import org.schabi.newpipe.util.ThemeHelper;
 import org.schabi.newpipe.util.external_communication.ShareUtils;
+import org.schabi.newpipe.util.universal.UniversalMediaExtractor;
 import org.schabi.newpipe.util.urlfinder.UrlFinder;
 import org.schabi.newpipe.views.FocusOverlayView;
 
@@ -247,11 +248,9 @@ public class RouterActivity extends AppCompatActivity {
                     if (isUrlSupported) {
                         onSuccess();
                     } else {
-                        showUnsupportedUrlDialog(url);
+                        handleUniversalUrl(url);
                     }
-                }, throwable -> handleError(this, new ErrorInfo(throwable,
-                        UserAction.SHARE_TO_NEWPIPE, "Getting service from url: " + url,
-                        null, url))));
+                }, throwable -> handleUniversalUrl(url)));
     }
 
     /**
@@ -293,6 +292,167 @@ public class RouterActivity extends AppCompatActivity {
                 .setNeutralButton(R.string.cancel, null)
                 .setOnDismissListener(dialog -> finish())
                 .show();
+    }
+
+    private void handleUniversalUrl(final String url) {
+        final LoadingDialog loadingDialog = new LoadingDialog(R.string.loading_metadata_title);
+        loadingDialog.show(getSupportFragmentManager(), "universalLoadingDialog");
+
+        disposables.add(UniversalMediaExtractor.extract(url)
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(streamInfo -> {
+                    loadingDialog.dismiss();
+                    showUniversalChoiceDialog(streamInfo);
+                }, throwable -> {
+                    loadingDialog.dismiss();
+                    showUnsupportedUrlDialog(url);
+                }));
+    }
+
+    private void showUniversalChoiceDialog(final StreamInfo streamInfo) {
+        final SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
+        final String preferredAction = preferences.getString(
+                getString(R.string.preferred_open_action_key),
+                getString(R.string.preferred_open_action_default));
+
+        if (preferredAction.equals(getString(R.string.download_key))) {
+            openUniversalDownloadDialog(streamInfo);
+            return;
+        } else if (preferredAction.equals(getString(R.string.popup_player_key))) {
+            playUniversalOnPopupPlayer(streamInfo);
+            return;
+        } else if (preferredAction.equals(getString(R.string.video_player_key))) {
+            playUniversalOnVideoPlayer(streamInfo);
+            return;
+        } else if (preferredAction.equals(getString(R.string.background_player_key))) {
+            playUniversalOnBackgroundPlayer(streamInfo);
+            return;
+        }
+
+        final List<AdapterChoiceItem> choices = new ArrayList<>();
+        choices.add(new AdapterChoiceItem(getString(R.string.download_key),
+                getString(R.string.download), R.drawable.ic_file_download));
+        choices.add(new AdapterChoiceItem(getString(R.string.popup_player_key),
+                getString(R.string.popup_player), R.drawable.ic_picture_in_picture));
+        choices.add(new AdapterChoiceItem(getString(R.string.video_player_key),
+                getString(R.string.video_player), R.drawable.ic_play_arrow));
+        choices.add(new AdapterChoiceItem(getString(R.string.background_player_key),
+                getString(R.string.background_player), R.drawable.ic_headset));
+
+        final Context themeWrapperContext = getThemeWrapperContext();
+        final LayoutInflater layoutInflater = LayoutInflater.from(themeWrapperContext);
+        final SingleChoiceDialogViewBinding binding =
+                SingleChoiceDialogViewBinding.inflate(layoutInflater);
+        final RadioGroup radioGroup = binding.list;
+
+        int id = 34567;
+        for (final AdapterChoiceItem item : choices) {
+            final RadioButton radioButton = ListRadioIconItemBinding.inflate(layoutInflater)
+                    .getRoot();
+            radioButton.setText(item.description);
+            radioButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    AppCompatResources.getDrawable(themeWrapperContext, item.icon),
+                    null, null, null);
+            radioButton.setChecked(false);
+            radioButton.setId(id++);
+            radioButton.setLayoutParams(new RadioGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            radioGroup.addView(radioButton);
+        }
+
+        final DialogInterface.OnClickListener dialogButtonsClickListener = (dialog, which) -> {
+            final int indexOfChild = radioGroup.indexOfChild(
+                    radioGroup.findViewById(radioGroup.getCheckedRadioButtonId()));
+            if (indexOfChild >= 0 && indexOfChild < choices.size()) {
+                final AdapterChoiceItem choice = choices.get(indexOfChild);
+                if (which == DialogInterface.BUTTON_POSITIVE) {
+                    preferences.edit()
+                            .putString(getString(R.string.preferred_open_action_key), choice.key)
+                            .apply();
+                }
+                handleUniversalChoice(choice.key, streamInfo);
+            }
+        };
+
+        alertDialogChoice = new AlertDialog.Builder(themeWrapperContext)
+                .setTitle(!TextUtils.isEmpty(streamInfo.getName())
+                        ? streamInfo.getName()
+                        : getString(R.string.preferred_open_action_share_menu_title))
+                .setView(binding.getRoot())
+                .setCancelable(true)
+                .setNegativeButton(R.string.just_once, dialogButtonsClickListener)
+                .setPositiveButton(R.string.always, dialogButtonsClickListener)
+                .setOnDismissListener(dialog -> {
+                    if (!selectionIsDownload) {
+                        finish();
+                    }
+                })
+                .create();
+
+        alertDialogChoice.setOnShowListener(dialog -> setDialogButtonsState(
+                alertDialogChoice, radioGroup.getCheckedRadioButtonId() != -1));
+
+        radioGroup.setOnCheckedChangeListener((group, checkedId) ->
+                setDialogButtonsState(alertDialogChoice, true));
+
+        final View.OnClickListener radioButtonsClickListener = v -> {
+            final int indexOfChild = radioGroup.indexOfChild(v);
+            if (indexOfChild == -1) {
+                return;
+            }
+            selectedPreviously = selectedRadioPosition;
+            selectedRadioPosition = indexOfChild;
+            if (selectedPreviously == selectedRadioPosition) {
+                handleUniversalChoice(choices.get(selectedRadioPosition).key, streamInfo);
+            }
+        };
+
+        for (int i = 0; i < radioGroup.getChildCount(); i++) {
+            radioGroup.getChildAt(i).setOnClickListener(radioButtonsClickListener);
+        }
+
+        alertDialogChoice.show();
+    }
+
+    private void handleUniversalChoice(final String key, final StreamInfo streamInfo) {
+        if (key.equals(getString(R.string.download_key))) {
+            openUniversalDownloadDialog(streamInfo);
+        } else if (key.equals(getString(R.string.popup_player_key))) {
+            playUniversalOnPopupPlayer(streamInfo);
+        } else if (key.equals(getString(R.string.video_player_key))) {
+            playUniversalOnVideoPlayer(streamInfo);
+        } else if (key.equals(getString(R.string.background_player_key))) {
+            playUniversalOnBackgroundPlayer(streamInfo);
+        }
+    }
+
+    private void openUniversalDownloadDialog(final StreamInfo streamInfo) {
+        if (PermissionHelper.checkStoragePermissions(this,
+                PermissionHelper.DOWNLOAD_DIALOG_REQUEST_CODE)) {
+            selectionIsDownload = true;
+            final DownloadDialog downloadDialog = new DownloadDialog(this, streamInfo);
+            downloadDialog.show(getSupportFragmentManager(), "downloadDialog");
+        }
+    }
+
+    private void playUniversalOnPopupPlayer(final StreamInfo streamInfo) {
+        if (!PermissionHelper.isPopupEnabledElseAsk(this)) {
+            finish();
+            return;
+        }
+        NavigationHelper.playOnPopupPlayer(this, new SinglePlayQueue(streamInfo), false);
+        finish();
+    }
+
+    private void playUniversalOnVideoPlayer(final StreamInfo streamInfo) {
+        NavigationHelper.playOnMainPlayer(this, new SinglePlayQueue(streamInfo), false);
+        finish();
+    }
+
+    private void playUniversalOnBackgroundPlayer(final StreamInfo streamInfo) {
+        NavigationHelper.playOnBackgroundPlayer(this, new SinglePlayQueue(streamInfo), false);
+        finish();
     }
 
     protected void onSuccess() {

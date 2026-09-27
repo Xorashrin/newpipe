@@ -45,7 +45,7 @@ public final class ListHelper {
     private static final List<MediaFormat> AUDIO_FORMAT_EFFICIENCY_RANKING =
             List.of(MediaFormat.MP3, MediaFormat.M4A, MediaFormat.WEBMA);
     // Use a Set for better performance
-    private static final Set<String> HIGH_RESOLUTION_LIST = Set.of("1440p", "2160p");
+    private static final Set<String> HIGH_RESOLUTION_LIST = Set.of("1440p", "2160p", "4320p");
     // Audio track types in order of priority. 0=lowest, n=highest
     private static final List<AudioTrackType> AUDIO_TRACK_TYPE_RANKING =
             List.of(AudioTrackType.DESCRIPTIVE, AudioTrackType.SECONDARY, AudioTrackType.DUBBED,
@@ -66,8 +66,11 @@ public final class ListHelper {
                     18, 34, 35, 59, 78, 22, 37, 38, // video MPEG4
                     43, 44, 45, 46, // video webm
                     171, 172, 139, 140, 141, 249, 250, 251, // audio
-                    160, 133, 134, 135, 212, 136, 298, 137, 299, 266, // video only
-                    278, 242, 243, 244, 245, 246, 247, 248, 271, 272, 302, 303, 308, 313, 315
+                    160, 133, 134, 135, 212, 136, 298, 137, 299, 266, 138, // video only MPEG4
+                    278, 242, 243, 244, 245, 246, 247, 248, 271, 272, 302, 303, 308, 313, 315, // video only webm
+                    330, 331, 332, 333, 334, 335, 336, 337, // video only webm VP9.2 HDR
+                    394, 395, 396, 397, 398, 399, 400, 401, 402, 571, // video only AV1 SDR (including 8k)
+                    694, 695, 696, 697, 698, 699, 700, 701, 702 // video only AV1 HDR (including 8k)
             );
 
     private ListHelper() { }

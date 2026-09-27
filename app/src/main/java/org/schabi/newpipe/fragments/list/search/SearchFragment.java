@@ -874,7 +874,14 @@ public class SearchFragment extends BaseListFragment<SearchInfo, ListExtractor.I
                     }, throwable -> showTextError(getString(R.string.unsupported_url))));
             return;
         } catch (final Exception ignored) {
-            // Exception occurred, it's not a url
+            // If the query is an HTTP/HTTPS URL not supported natively by NewPipe services,
+            // route to RouterActivity for universal media extraction (social media / any website)
+            final String trimmed = theSearchString.trim();
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                getFM().popBackStackImmediate();
+                NavigationHelper.openRouterActivity(activity, trimmed);
+                return;
+            }
         }
 
         // prepare search
