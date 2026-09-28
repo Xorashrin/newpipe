@@ -54,8 +54,14 @@ public class DownloadInitializer extends Thread {
                     long lowestSize = Long.MAX_VALUE;
 
                     for (int i = 0; i < mMission.urls.length && mMission.running; i++) {
-                        mConn = mMission.openConnection(mMission.urls[i], true, 0, 0);
-                        mMission.establishConnection(mId, mConn);
+                        try {
+                            mConn = mMission.openConnection(mMission.urls[i], true, 0, 0);
+                            mMission.establishConnection(mId, mConn);
+                        } catch (Exception e) {
+                            dispose();
+                            mConn = mMission.openConnection(mMission.urls[i], false, 0, 0);
+                            mMission.establishConnection(mId, mConn);
+                        }
                         dispose();
 
                         if (Thread.interrupted()) return;
@@ -84,8 +90,14 @@ public class DownloadInitializer extends Thread {
                     }
                 } else {
                     // ask for the current resource length
-                    mConn = mMission.openConnection(true, 0, 0);
-                    mMission.establishConnection(mId, mConn);
+                    try {
+                        mConn = mMission.openConnection(true, 0, 0);
+                        mMission.establishConnection(mId, mConn);
+                    } catch (Exception e) {
+                        dispose();
+                        mConn = mMission.openConnection(false, 0, 0);
+                        mMission.establishConnection(mId, mConn);
+                    }
                     dispose();
 
                     if (!mMission.running || Thread.interrupted()) return;
@@ -110,8 +122,16 @@ public class DownloadInitializer extends Thread {
                     }
                 } else {
                     // Open again
-                    mConn = mMission.openConnection(true, mMission.length - 10, mMission.length);
-                    mMission.establishConnection(mId, mConn);
+                    try {
+                        mConn = mMission.openConnection(true, mMission.length - 10, mMission.length);
+                        mMission.establishConnection(mId, mConn);
+                    } catch (Exception e) {
+                        dispose();
+                        mConn = mMission.openConnection(false, mMission.length - 10, mMission.length);
+                        try {
+                            mMission.establishConnection(mId, mConn);
+                        } catch (Exception ignored) { }
+                    }
                     dispose();
 
                     if (!mMission.running || Thread.interrupted()) return;

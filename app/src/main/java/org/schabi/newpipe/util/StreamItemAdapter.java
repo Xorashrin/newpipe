@@ -264,19 +264,79 @@ public class StreamItemAdapter<T extends Stream, U extends Stream> extends BaseA
                     if (!changeSize && !changeFormat) {
                         continue;
                     }
-                    final Response response = DownloaderImpl.getInstance()
-                            .head(stream.getContent());
-                    if (changeSize) {
-                        final String contentLength = response.getHeader("Content-Length");
-                        if (!isNullOrEmpty(contentLength)) {
-                            streamsWrapper.setSize(stream, Long.parseLong(contentLength));
-                            hasChanged = true;
+
+                    // Check UniversalMediaExtractor size cache first
+                    final long cached = org.schabi.newpipe.util.universal.UniversalMediaExtractor
+                            .getCachedSize(stream.getContent());
+                    if (changeSize && cached > 0) {
+                        streamsWrapper.setSize(stream, cached);
+                        hasChanged = true;
+                    }
+
+                    if (streamsWrapper.getSizeInBytes(stream) > 0 && !changeFormat) {
+                        continue;
+                    }
+
+                    try {
+                        Response response = null;
+                        try {
+                            response = DownloaderImpl.getInstance()
+                                    .head(stream.getContent());
+                        } catch (final Throwable ignored) { }
+
+                        if (response == null || response.responseCode() < 200 || response.responseCode() >= 300) {
+                            // If HEAD fails or gives error (e.g. 403 on social media CDNs), try GET with Range: bytes=0-0
+                            try {
+                                final java.util.Map<String, List<String>> headers = new java.util.HashMap<>();
+                                headers.put("Range", Collections.singletonList("bytes=0-0"));
+                                final org.schabi.newpipe.extractor.downloader.Request rangeReq =
+                                        new org.schabi.newpipe.extractor.downloader.Request.Builder()
+                                                .url(stream.getContent())
+                                                .httpMethod("GET")
+                                                .headers(headers)
+                                                .build();
+                                response = DownloaderImpl.getInstance().execute(rangeReq);
+                            } catch (final Throwable ignored) { }
                         }
-                    }
-                    if (changeFormat) {
-                        hasChanged = retrieveMediaFormat(stream, streamsWrapper, response)
-                                || hasChanged;
-                    }
+
+                        if (response != null) {
+                            if (changeSize && streamsWrapper.getSizeInBytes(stream) <= SIZE_UNSET) {
+                                final String cr = response.getHeader("Content-Range");
+                                if (!isNullOrEmpty(cr) && cr.contains("/")) {
+                                    final String totalStr = cr.substring(cr.lastIndexOf('/') + 1).trim();
+                                    try {
+                                        final long totalBytes = Long.parseLong(totalStr);
+                                        if (totalBytes > 0) {
+                                            streamsWrapper.setSize(stream, totalBytes);
+                                            org.schabi.newpipe.util.universal.UniversalMediaExtractor
+                                                    .cacheSize(stream.getContent(), totalBytes);
+                                            hasChanged = true;
+                                        }
+                                    } catch (final NumberFormatException ignored) { }
+                                }
+
+                                if (streamsWrapper.getSizeInBytes(stream) <= SIZE_UNSET) {
+                                    final String cl = response.getHeader("Content-Length");
+                                    if (!isNullOrEmpty(cl)) {
+                                        try {
+                                            final long totalBytes = Long.parseLong(cl);
+                                            if (totalBytes > 0) {
+                                                streamsWrapper.setSize(stream, totalBytes);
+                                                org.schabi.newpipe.util.universal.UniversalMediaExtractor
+                                                        .cacheSize(stream.getContent(), totalBytes);
+                                                hasChanged = true;
+                                            }
+                                        } catch (final NumberFormatException ignored) { }
+                                    }
+                                }
+                            }
+
+                            if (changeFormat) {
+                                hasChanged = retrieveMediaFormat(stream, streamsWrapper, response)
+                                        || hasChanged;
+                            }
+                        }
+                    } catch (final Throwable ignored) { }
                 }
                 return hasChanged;
             };

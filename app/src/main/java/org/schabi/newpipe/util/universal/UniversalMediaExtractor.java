@@ -31,7 +31,9 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,6 +49,22 @@ import okhttp3.Response;
  */
 public final class UniversalMediaExtractor {
     private static final String TAG = "UniversalExtractor";
+
+    private static final Map<String, Long> STREAM_SIZE_CACHE = new ConcurrentHashMap<>();
+
+    public static long getCachedSize(@Nullable final String url) {
+        if (TextUtils.isEmpty(url)) {
+            return -1;
+        }
+        final Long size = STREAM_SIZE_CACHE.get(url);
+        return size != null ? size : -1;
+    }
+
+    public static void cacheSize(@Nullable final String url, final long size) {
+        if (!TextUtils.isEmpty(url) && size > 0) {
+            STREAM_SIZE_CACHE.put(url, size);
+        }
+    }
 
     private static final String BROWSER_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -160,7 +178,7 @@ public final class UniversalMediaExtractor {
 
                 if (response.body() != null) {
                     final String responseBody = response.body().string();
-                    final StreamInfo genericInfo = extractGenericHtml(effectiveUrl, responseBody);
+                    final StreamInfo genericInfo = extractGenericHtml(client, effectiveUrl, responseBody);
                     if (genericInfo != null) {
                         return genericInfo;
                     }
@@ -181,7 +199,7 @@ public final class UniversalMediaExtractor {
             try (Response botResponse = client.newCall(botRequest).execute()) {
                 if (botResponse.body() != null) {
                     final String botBody = botResponse.body().string();
-                    final StreamInfo botInfo = extractGenericHtml(url, botBody);
+                    final StreamInfo botInfo = extractGenericHtml(client, url, botBody);
                     if (botInfo != null) {
                         return botInfo;
                     }
@@ -233,7 +251,7 @@ public final class UniversalMediaExtractor {
             try (Response embedResp = client.newCall(embedReq).execute()) {
                 if (embedResp.body() != null) {
                     final String html = embedResp.body().string();
-                    final StreamInfo info = parseFacebookEmbedHtml(originalUrl, html);
+                    final StreamInfo info = parseFacebookEmbedHtml(client, originalUrl, html);
                     if (info != null) {
                         return info;
                     }
@@ -255,7 +273,7 @@ public final class UniversalMediaExtractor {
             try (Response botResp = client.newCall(botReq).execute()) {
                 if (botResp.body() != null) {
                     final String html = botResp.body().string();
-                    final StreamInfo info = parseFacebookEmbedHtml(originalUrl, html);
+                    final StreamInfo info = parseFacebookEmbedHtml(client, originalUrl, html);
                     if (info != null) {
                         return info;
                     }
@@ -269,7 +287,8 @@ public final class UniversalMediaExtractor {
     }
 
     @Nullable
-    private static StreamInfo parseFacebookEmbedHtml(@NonNull final String originalUrl,
+    private static StreamInfo parseFacebookEmbedHtml(@Nullable final OkHttpClient client,
+                                                     @NonNull final String originalUrl,
                                                      @NonNull final String html) {
         String hdUrl = null;
         String sdUrl = null;
@@ -342,6 +361,8 @@ public final class UniversalMediaExtractor {
         }
 
         final List<VideoStream> videoStreams = new ArrayList<>();
+        final List<AudioStream> audioStreams = new ArrayList<>();
+
         if (!TextUtils.isEmpty(hdUrl) && isValidMediaUrl(hdUrl)) {
             videoStreams.add(new VideoStream.Builder()
                     .setId("fb_hd")
@@ -351,6 +372,18 @@ public final class UniversalMediaExtractor {
                     .setIsVideoOnly(false)
                     .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
                     .build());
+
+            audioStreams.add(new AudioStream.Builder()
+                    .setId("fb_hd_audio")
+                    .setContent(hdUrl, true)
+                    .setMediaFormat(MediaFormat.M4A)
+                    .setAverageBitrate(128)
+                    .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
+                    .build());
+
+            if (client != null) {
+                probeMediaSize(client, hdUrl, "https://www.facebook.com/");
+            }
         }
 
         if (!TextUtils.isEmpty(sdUrl) && isValidMediaUrl(sdUrl)) {
@@ -362,6 +395,20 @@ public final class UniversalMediaExtractor {
                     .setIsVideoOnly(false)
                     .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
                     .build());
+
+            if (audioStreams.isEmpty()) {
+                audioStreams.add(new AudioStream.Builder()
+                        .setId("fb_sd_audio")
+                        .setContent(sdUrl, true)
+                        .setMediaFormat(MediaFormat.M4A)
+                        .setAverageBitrate(128)
+                        .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
+                        .build());
+            }
+
+            if (client != null) {
+                probeMediaSize(client, sdUrl, "https://www.facebook.com/");
+            }
         }
 
         if (videoStreams.isEmpty()) {
@@ -380,7 +427,7 @@ public final class UniversalMediaExtractor {
 
         streamInfo.setVideoStreams(videoStreams);
         streamInfo.setVideoOnlyStreams(Collections.emptyList());
-        streamInfo.setAudioStreams(Collections.emptyList());
+        streamInfo.setAudioStreams(audioStreams);
         streamInfo.setSubtitles(Collections.emptyList());
         return streamInfo;
     }
@@ -415,6 +462,7 @@ public final class UniversalMediaExtractor {
                     if (videoUrlMatcher.find()) {
                         final String videoUrl = unescapeJsonString(videoUrlMatcher.group(1));
                         if (isValidMediaUrl(videoUrl)) {
+                            probeMediaSize(client, videoUrl, "https://www.instagram.com/");
                             return createSingleStreamInfo(originalUrl, "Instagram Reel", videoUrl,
                                     MediaFormat.MPEG_4);
                         }
@@ -425,6 +473,7 @@ public final class UniversalMediaExtractor {
                     if (videoElem != null) {
                         final String src = videoElem.attr("src");
                         if (isValidMediaUrl(src)) {
+                            probeMediaSize(client, src, "https://www.instagram.com/");
                             return createSingleStreamInfo(originalUrl, "Instagram Reel", src,
                                     MediaFormat.MPEG_4);
                         }
@@ -449,8 +498,10 @@ public final class UniversalMediaExtractor {
                     final Element ogVideo = doc.selectFirst("meta[property=og:video], "
                             + "meta[property=og:video:secure_url]");
                     if (ogVideo != null && isValidMediaUrl(ogVideo.attr("content"))) {
+                        final String src = ogVideo.attr("content");
+                        probeMediaSize(client, src, "https://www.instagram.com/");
                         return createSingleStreamInfo(originalUrl, "Instagram Reel",
-                                ogVideo.attr("content"), MediaFormat.MPEG_4);
+                                src, MediaFormat.MPEG_4);
                     }
                 }
             }
@@ -500,19 +551,30 @@ public final class UniversalMediaExtractor {
                         final String chosenUrl = !TextUtils.isEmpty(hdPlayUrl) ? hdPlayUrl : playUrl;
 
                         if (isValidMediaUrl(chosenUrl)) {
+                            final long tikSize = data.optLong("hd_size", 0) > 0
+                                    ? data.optLong("hd_size") : data.optLong("size", 0);
+                            if (tikSize > 0) {
+                                cacheSize(chosenUrl, tikSize);
+                            } else {
+                                probeMediaSize(client, chosenUrl, "https://www.tiktok.com/");
+                            }
+
                             final StreamInfo streamInfo = createSingleStreamInfo(originalUrl,
                                     title, chosenUrl, MediaFormat.MPEG_4);
+
+                            final List<AudioStream> audioList = new ArrayList<>(streamInfo.getAudioStreams());
                             final String musicUrl = data.optString("music");
                             if (isValidMediaUrl(musicUrl)) {
-                                final AudioStream audioStream = new AudioStream.Builder()
+                                probeMediaSize(client, musicUrl, "https://www.tiktok.com/");
+                                audioList.add(0, new AudioStream.Builder()
                                         .setId("tiktok_music")
                                         .setContent(musicUrl, true)
                                         .setMediaFormat(MediaFormat.MP3)
-                                        .setAverageBitrate(128)
+                                        .setAverageBitrate(192)
                                         .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
-                                        .build();
-                                streamInfo.setAudioStreams(Collections.singletonList(audioStream));
+                                        .build());
                             }
+                            streamInfo.setAudioStreams(audioList);
                             return streamInfo;
                         }
                     }
@@ -552,6 +614,7 @@ public final class UniversalMediaExtractor {
                                         ? playAddr : downloadAddr;
 
                                 if (isValidMediaUrl(chosenUrl)) {
+                                    probeMediaSize(client, chosenUrl, "https://www.tiktok.com/");
                                     return createSingleStreamInfo(originalUrl, desc, chosenUrl,
                                             MediaFormat.MPEG_4);
                                 }
@@ -598,6 +661,7 @@ public final class UniversalMediaExtractor {
                             if (videos.length() > 0) {
                                 final String videoUrl = videos.getJSONObject(0).optString("url");
                                 if (isValidMediaUrl(videoUrl)) {
+                                    probeMediaSize(client, videoUrl, "https://twitter.com/");
                                     return createSingleStreamInfo(originalUrl, title, videoUrl,
                                             MediaFormat.MPEG_4);
                                 }
@@ -636,6 +700,7 @@ public final class UniversalMediaExtractor {
                             }
                         }
                         if (isValidMediaUrl(bestUrl)) {
+                            probeMediaSize(client, bestUrl, "https://twitter.com/");
                             return createSingleStreamInfo(originalUrl, text, bestUrl,
                                     MediaFormat.MPEG_4);
                         }
@@ -748,7 +813,8 @@ public final class UniversalMediaExtractor {
     //////////////////////////////////////////////////////////////////////////*/
 
     @Nullable
-    private static StreamInfo extractGenericHtml(@NonNull final String originalUrl,
+    private static StreamInfo extractGenericHtml(@Nullable final OkHttpClient client,
+                                                 @NonNull final String originalUrl,
                                                  @NonNull final String html) {
         final Document doc = Jsoup.parse(html, originalUrl);
 
@@ -823,18 +889,35 @@ public final class UniversalMediaExtractor {
         }
 
         final List<VideoStream> videoStreams = new ArrayList<>();
+        final List<AudioStream> audioStreams = new ArrayList<>();
         int index = 0;
         for (final String streamUrl : candidates) {
             final boolean isHls = streamUrl.contains(".m3u8");
+            final MediaFormat vFormat = isHls ? MediaFormat.MPEG_4 : resolveVideoFormat(streamUrl, null);
             final VideoStream stream = new VideoStream.Builder()
-                    .setId("video_" + (index++))
+                    .setId("video_" + index)
                     .setContent(streamUrl, true)
-                    .setMediaFormat(isHls ? MediaFormat.MPEG_4 : resolveVideoFormat(streamUrl, null))
-                    .setResolution("Standard")
+                    .setMediaFormat(vFormat)
+                    .setResolution("1080p (HD)")
                     .setIsVideoOnly(false)
                     .setDeliveryMethod(isHls ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
                     .build();
             videoStreams.add(stream);
+
+            if (client != null) {
+                probeMediaSize(client, streamUrl, originalUrl);
+            }
+
+            if (!isHls && vFormat == MediaFormat.MPEG_4) {
+                audioStreams.add(new AudioStream.Builder()
+                        .setId("audio_" + index)
+                        .setContent(streamUrl, true)
+                        .setMediaFormat(MediaFormat.M4A)
+                        .setAverageBitrate(128)
+                        .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
+                        .build());
+            }
+            index++;
         }
 
         final StreamInfo streamInfo = new StreamInfo(
@@ -849,7 +932,7 @@ public final class UniversalMediaExtractor {
 
         streamInfo.setVideoStreams(videoStreams);
         streamInfo.setVideoOnlyStreams(Collections.emptyList());
-        streamInfo.setAudioStreams(Collections.emptyList());
+        streamInfo.setAudioStreams(audioStreams);
         streamInfo.setSubtitles(Collections.emptyList());
         return streamInfo;
     }
@@ -894,12 +977,23 @@ public final class UniversalMediaExtractor {
                     .setId("video_0")
                     .setContent(mediaUrl, true)
                     .setMediaFormat(format)
-                    .setResolution("Original")
+                    .setResolution("1080p (HD)")
                     .setIsVideoOnly(false)
                     .setDeliveryMethod(isHls ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
                     .build();
             streamInfo.setVideoStreams(Collections.singletonList(videoStream));
-            streamInfo.setAudioStreams(Collections.emptyList());
+
+            final List<AudioStream> audioList = new ArrayList<>();
+            if (format == MediaFormat.MPEG_4) {
+                audioList.add(new AudioStream.Builder()
+                        .setId("audio_0")
+                        .setContent(mediaUrl, true)
+                        .setMediaFormat(MediaFormat.M4A)
+                        .setAverageBitrate(128)
+                        .setDeliveryMethod(isHls ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
+                        .build());
+            }
+            streamInfo.setAudioStreams(audioList);
             streamInfo.setVideoOnlyStreams(Collections.emptyList());
         }
 
@@ -922,21 +1016,113 @@ public final class UniversalMediaExtractor {
                 0
         );
 
+        final boolean isHls = videoUrl.contains(".m3u8");
         final VideoStream videoStream = new VideoStream.Builder()
                 .setId("video_0")
                 .setContent(videoUrl, true)
                 .setMediaFormat(format)
-                .setResolution("Standard")
+                .setResolution("1080p (HD)")
                 .setIsVideoOnly(false)
-                .setDeliveryMethod(videoUrl.contains(".m3u8")
-                        ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
+                .setDeliveryMethod(isHls ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
                 .build();
+
+        final List<AudioStream> audioStreams = new ArrayList<>();
+        if (format == MediaFormat.MPEG_4) {
+            audioStreams.add(new AudioStream.Builder()
+                    .setId("audio_0")
+                    .setContent(videoUrl, true)
+                    .setMediaFormat(MediaFormat.M4A)
+                    .setAverageBitrate(128)
+                    .setDeliveryMethod(isHls ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
+                    .build());
+        }
 
         streamInfo.setVideoStreams(Collections.singletonList(videoStream));
         streamInfo.setVideoOnlyStreams(Collections.emptyList());
-        streamInfo.setAudioStreams(Collections.emptyList());
+        streamInfo.setAudioStreams(audioStreams);
         streamInfo.setSubtitles(Collections.emptyList());
         return streamInfo;
+    }
+
+    /**
+     * Proactively probes content size using HEAD request and falls back to a 1-byte GET Range request.
+     */
+    public static long probeMediaSize(@NonNull final OkHttpClient client,
+                                      @NonNull final String mediaUrl,
+                                      @Nullable final String referer) {
+        if (TextUtils.isEmpty(mediaUrl)) {
+            return -1;
+        }
+        final long cached = getCachedSize(mediaUrl);
+        if (cached > 0) {
+            return cached;
+        }
+
+        // 1. Try HEAD request with browser headers
+        try {
+            final Request.Builder rb = new Request.Builder()
+                    .url(mediaUrl)
+                    .head()
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .header("Accept", "*/*");
+            if (!TextUtils.isEmpty(referer)) {
+                rb.header("Referer", referer);
+            }
+            try (Response resp = client.newCall(rb.build()).execute()) {
+                if (resp.isSuccessful()) {
+                    final String cl = resp.header("Content-Length");
+                    if (!TextUtils.isEmpty(cl)) {
+                        try {
+                            final long len = Long.parseLong(cl);
+                            if (len > 0) {
+                                cacheSize(mediaUrl, len);
+                                return len;
+                            }
+                        } catch (final NumberFormatException ignored) { }
+                    }
+                }
+            }
+        } catch (final Exception ignored) { }
+
+        // 2. Try GET request with Range: bytes=0-0
+        try {
+            final Request.Builder rb = new Request.Builder()
+                    .url(mediaUrl)
+                    .get()
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .header("Range", "bytes=0-0")
+                    .header("Accept", "*/*");
+            if (!TextUtils.isEmpty(referer)) {
+                rb.header("Referer", referer);
+            }
+            try (Response resp = client.newCall(rb.build()).execute()) {
+                final String cr = resp.header("Content-Range");
+                if (!TextUtils.isEmpty(cr) && cr.contains("/")) {
+                    final String totalStr = cr.substring(cr.lastIndexOf('/') + 1).trim();
+                    try {
+                        final long len = Long.parseLong(totalStr);
+                        if (len > 0) {
+                            cacheSize(mediaUrl, len);
+                            return len;
+                        }
+                    } catch (final NumberFormatException ignored) { }
+                }
+                if (resp.isSuccessful()) {
+                    final String cl = resp.header("Content-Length");
+                    if (!TextUtils.isEmpty(cl)) {
+                        try {
+                            final long len = Long.parseLong(cl);
+                            if (len > 0) {
+                                cacheSize(mediaUrl, len);
+                                return len;
+                            }
+                        } catch (final NumberFormatException ignored) { }
+                    }
+                }
+            }
+        } catch (final Exception ignored) { }
+
+        return -1;
     }
 
     /*//////////////////////////////////////////////////////////////////////////

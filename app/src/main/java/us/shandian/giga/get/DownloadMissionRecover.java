@@ -73,6 +73,23 @@ public class DownloadMissionRecover extends Thread {
                 mExtractor = svr.getStreamExtractor(mMission.source);
                 mExtractor.fetchPage();
             } catch (ExtractionException e) {
+                try {
+                    final org.schabi.newpipe.extractor.stream.StreamInfo info =
+                            org.schabi.newpipe.util.universal.UniversalMediaExtractor.extract(mMission.source);
+                    if (info != null) {
+                        if (!info.getVideoStreams().isEmpty()) {
+                            mMission.urls[mMission.current] = info.getVideoStreams().get(0).getContent();
+                        } else if (!info.getAudioStreams().isEmpty()) {
+                            mMission.urls[mMission.current] = info.getAudioStreams().get(0).getContent();
+                        }
+                        if (mMission.urls[mMission.current] != null) {
+                            mMission.running = false;
+                            mMission.start();
+                            return;
+                        }
+                    }
+                } catch (Exception ignored) { }
+
                 mExtractor = null;
                 throw e;
             }

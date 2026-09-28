@@ -221,7 +221,28 @@ public class DownloadMission extends Mission {
     HttpURLConnection openConnection(String url, boolean headRequest, long rangeStart, long rangeEnd) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setInstanceFollowRedirects(true);
-        conn.setRequestProperty("User-Agent", DownloaderImpl.USER_AGENT);
+
+        if (url.contains("tiktok") || url.contains("instagram.com") || url.contains("cdninstagram.com")
+                || url.contains("fbcdn.net") || url.contains("facebook.com")
+                || url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")) {
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
+        } else {
+            conn.setRequestProperty("User-Agent", DownloaderImpl.USER_AGENT);
+        }
+
+        if (url.contains("tiktok")) {
+            conn.setRequestProperty("Referer", "https://www.tiktok.com/");
+        } else if (url.contains("instagram.com") || url.contains("cdninstagram.com")) {
+            conn.setRequestProperty("Referer", "https://www.instagram.com/");
+        } else if (url.contains("fbcdn.net") || url.contains("facebook.com")) {
+            conn.setRequestProperty("Referer", "https://www.facebook.com/");
+        } else if (url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")) {
+            conn.setRequestProperty("Referer", "https://twitter.com/");
+        } else if (source != null && (source.contains("tiktok.com") || source.contains("instagram.com")
+                || source.contains("facebook.com") || source.contains("twitter.com") || source.contains("x.com"))) {
+            conn.setRequestProperty("Referer", source);
+        }
+
         conn.setRequestProperty("Accept", "*/*");
         conn.setRequestProperty("Accept-Encoding", "*");
 
@@ -229,6 +250,7 @@ public class DownloadMission extends Mission {
 
         // BUG workaround: switching between networks can freeze the download forever
         conn.setConnectTimeout(30000);
+        conn.setReadTimeout(30000);
 
         if (rangeStart >= 0) {
             String req = "bytes=" + rangeStart + "-";

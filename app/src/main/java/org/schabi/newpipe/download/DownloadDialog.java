@@ -428,6 +428,7 @@ public class DownloadDialog extends DialogFragment
         setRadioButtonsState(true);
         dialogBinding.audioStreamSpinner.setAdapter(audioStreamsAdapter);
         dialogBinding.audioStreamSpinner.setSelection(selectedAudioIndex);
+        audioStreamsAdapter.notifyDataSetChanged();
         dialogBinding.audioStreamSpinner.setVisibility(View.VISIBLE);
         dialogBinding.audioTrackSpinner.setVisibility(
                 wrappedAudioTracks.size() > 1 ? View.VISIBLE : View.GONE);
@@ -441,6 +442,7 @@ public class DownloadDialog extends DialogFragment
 
         dialogBinding.qualitySpinner.setAdapter(videoStreamsAdapter);
         dialogBinding.qualitySpinner.setSelection(selectedVideoIndex);
+        videoStreamsAdapter.notifyDataSetChanged();
         dialogBinding.qualitySpinner.setVisibility(View.VISIBLE);
         setRadioButtonsState(true);
         dialogBinding.audioStreamSpinner.setVisibility(View.GONE);
@@ -772,6 +774,9 @@ public class DownloadDialog extends DialogFragment
             } else if (format != null) {
                 mimeTmp = format.mimeType;
                 filenameTmp += format.getSuffix();
+            } else {
+                mimeTmp = "audio/mp4";
+                filenameTmp += "m4a";
             }
         } else if (checkedRadioButtonId == R.id.video_button) {
             selectedMediaType = getString(R.string.last_download_type_video_key);
@@ -781,6 +786,9 @@ public class DownloadDialog extends DialogFragment
             if (format != null) {
                 mimeTmp = format.mimeType;
                 filenameTmp += format.getSuffix();
+            } else {
+                mimeTmp = "video/mp4";
+                filenameTmp += "mp4";
             }
         } else if (checkedRadioButtonId == R.id.subtitle_button) {
             selectedMediaType = getString(R.string.last_download_type_subtitle_key);
@@ -795,9 +803,25 @@ public class DownloadDialog extends DialogFragment
                 filenameTmp += MediaFormat.SRT.getSuffix();
             } else if (format != null) {
                 filenameTmp += format.getSuffix();
+            } else {
+                filenameTmp += "srt";
             }
         } else {
             throw new RuntimeException("No stream selected");
+        }
+
+        if (filenameTmp.endsWith(".")) {
+            if (checkedRadioButtonId == R.id.audio_button) {
+                filenameTmp += "m4a";
+                if (mimeTmp == null) {
+                    mimeTmp = "audio/mp4";
+                }
+            } else {
+                filenameTmp += "mp4";
+                if (mimeTmp == null) {
+                    mimeTmp = "video/mp4";
+                }
+            }
         }
 
         if (!askForSavePath && (mainStorage == null

@@ -163,6 +163,25 @@ public final class DownloaderImpl extends Downloader {
                     requestBuilder.addHeader(headerName, headerValue));
         });
 
+        if (!headers.containsKey("Referer") && !headers.containsKey("referer")) {
+            if (url.contains("tiktok")) {
+                requestBuilder.addHeader("Referer", "https://www.tiktok.com/");
+            } else if (url.contains("instagram.com") || url.contains("cdninstagram.com")) {
+                requestBuilder.addHeader("Referer", "https://www.instagram.com/");
+            } else if (url.contains("fbcdn.net") || url.contains("facebook.com")) {
+                requestBuilder.addHeader("Referer", "https://www.facebook.com/");
+            } else if (url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")) {
+                requestBuilder.addHeader("Referer", "https://twitter.com/");
+            }
+        }
+
+        if (url.contains("tiktok") || url.contains("instagram.com") || url.contains("cdninstagram.com")
+                || url.contains("fbcdn.net") || url.contains("facebook.com")
+                || url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")) {
+            requestBuilder.header("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
+        }
+
         try (
                 okhttp3.Response response = client.newCall(requestBuilder.build()).execute()
         ) {

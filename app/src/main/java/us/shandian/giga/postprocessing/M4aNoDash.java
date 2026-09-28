@@ -15,16 +15,24 @@ class M4aNoDash extends Postprocessing {
     @Override
     boolean test(SharpStream... sources) throws IOException {
         // check if the mp4 file is DASH (youtube)
+        try {
+            Mp4DashReader reader = new Mp4DashReader(sources[0]);
+            reader.parse();
 
-        Mp4DashReader reader = new Mp4DashReader(sources[0]);
-        reader.parse();
-
-        switch (reader.getBrands()[0]) {
-            case 0x64617368:// DASH
-            case 0x69736F35:// ISO5
-                return true;
-            default:
-                return false;
+            int[] brands = reader.getBrands();
+            if (brands != null && brands.length > 0) {
+                switch (brands[0]) {
+                    case 0x64617368:// DASH
+                    case 0x69736F35:// ISO5
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            // Not a DASH MP4 container (e.g. standard progressive video/audio), skip demuxing
+            return false;
         }
     }
 
