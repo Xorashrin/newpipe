@@ -100,7 +100,7 @@ public final class UniversalMediaExtractor {
     }
 
     @NonNull
-    private static StreamInfo extractSynchronous(@NonNull final String url)
+    public static StreamInfo extractSynchronous(@NonNull final String url)
             throws ExtractionException {
         final OkHttpClient client = DownloaderImpl.getInstance() != null
                 ? DownloaderImpl.getInstance().getClient()

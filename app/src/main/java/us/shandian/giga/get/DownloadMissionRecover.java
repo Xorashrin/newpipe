@@ -75,7 +75,8 @@ public class DownloadMissionRecover extends Thread {
             } catch (ExtractionException e) {
                 try {
                     final org.schabi.newpipe.extractor.stream.StreamInfo info =
-                            org.schabi.newpipe.util.universal.UniversalMediaExtractor.extract(mMission.source);
+                            org.schabi.newpipe.util.universal.UniversalMediaExtractor
+                                    .extractSynchronous(mMission.source);
                     if (info != null) {
                         if (!info.getVideoStreams().isEmpty()) {
                             mMission.urls[mMission.current] = info.getVideoStreams().get(0).getContent();
