@@ -74,6 +74,7 @@ import org.schabi.newpipe.util.ChannelTabHelper;
 import org.schabi.newpipe.util.Constants;
 import org.schabi.newpipe.util.DeviceUtils;
 import org.schabi.newpipe.util.ExtractorHelper;
+import org.schabi.newpipe.util.ItagHelper;
 import org.schabi.newpipe.util.NavigationHelper;
 import org.schabi.newpipe.util.PermissionHelper;
 import org.schabi.newpipe.util.ThemeHelper;
@@ -142,6 +143,7 @@ public class RouterActivity extends AppCompatActivity {
         getWindow().setAttributes(params);
 
         super.onCreate(savedInstanceState);
+        ItagHelper.initExtendedItags();
         Bridge.restoreInstanceState(this, savedInstanceState);
 
         // FragmentManager will take care to recreate (Playlist|Download)Dialog when screen rotates

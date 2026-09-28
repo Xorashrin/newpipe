@@ -96,6 +96,9 @@ open class App :
         // Initialize settings first because other initializations can use its values
         NewPipeSettings.initSettings(this)
 
+        // Initialize extended 8K and HDR itags
+        org.schabi.newpipe.util.ItagHelper.initExtendedItags()
+
         NewPipe.init(
             getDownloader(),
             Localization.getPreferredLocalization(this),

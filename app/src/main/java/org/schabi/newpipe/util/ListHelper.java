@@ -242,7 +242,7 @@ public final class ListHelper {
                 PreferenceManager.getDefaultSharedPreferences(context);
 
         final boolean showHigherResolutions = preferences.getBoolean(
-                context.getString(R.string.show_higher_resolutions_key), false);
+                context.getString(R.string.show_higher_resolutions_key), true);
         final MediaFormat defaultFormat = getDefaultFormat(context,
                 R.string.default_video_format_key, R.string.default_video_format_value);
 
@@ -485,8 +485,9 @@ public final class ListHelper {
                 // Filter out higher resolutions (or not if high resolutions should always be shown)
                 .filter(stream -> showHigherResolutions
                         || !HIGH_RESOLUTION_LIST.contains(stream.getResolution()
-                        // Replace any frame rate with nothing
-                        .replaceAll("p\\d+$", "p")))
+                        // Replace any frame rate and HDR with nothing
+                        .replaceAll("p\\d+.*$", "p")
+                        .replaceAll(" HDR", "")))
                 .collect(Collectors.toList());
 
         final HashMap<String, VideoStream> hashMap = new HashMap<>();
@@ -583,14 +584,14 @@ public final class ListHelper {
         int resMatchOnlyIndex = -1;
         int resMatchOnlyNoRefreshIndex = -1;
         int lowerResMatchNoRefreshIndex = -1;
-        final String targetResolutionNoRefresh = targetResolution.replaceAll("p\\d+$", "p");
+        final String targetResolutionNoRefresh = targetResolution.replaceAll("p\\d+.*$", "p");
 
         for (int idx = 0; idx < videoStreams.size(); idx++) {
             final MediaFormat format = targetFormat == null
                     ? null
                     : videoStreams.get(idx).getFormat();
             final String resolution = videoStreams.get(idx).getResolution();
-            final String resolutionNoRefresh = resolution.replaceAll("p\\d+$", "p");
+            final String resolutionNoRefresh = resolution.replaceAll("p\\d+.*$", "p");
 
             if (format == targetFormat && resolution.equals(targetResolution)) {
                 fullMatchIndex = idx;
@@ -685,11 +686,23 @@ public final class ListHelper {
     private static int compareVideoStreamResolution(@NonNull final String r1,
                                                     @NonNull final String r2) {
         try {
-            final int res1 = Integer.parseInt(r1.replaceAll("0p\\d+$", "1")
+            final boolean isHdr1 = r1.contains("HDR");
+            final boolean isHdr2 = r2.contains("HDR");
+            final String clean1 = r1.replace(" HDR", "").trim();
+            final String clean2 = r2.replace(" HDR", "").trim();
+
+            final int res1 = Integer.parseInt(clean1.replaceAll("0p\\d+$", "1")
                     .replaceAll("[^\\d.]", ""));
-            final int res2 = Integer.parseInt(r2.replaceAll("0p\\d+$", "1")
+            final int res2 = Integer.parseInt(clean2.replaceAll("0p\\d+$", "1")
                     .replaceAll("[^\\d.]", ""));
-            return res1 - res2;
+
+            if (res1 != res2) {
+                return res1 - res2;
+            }
+            if (isHdr1 != isHdr2) {
+                return isHdr1 ? 1 : -1;
+            }
+            return 0;
         } catch (final NumberFormatException e) {
             // Consider the first one greater because we don't know if the two streams are
             // different or not (a NumberFormatException was thrown so we don't know the resolution
