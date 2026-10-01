@@ -118,9 +118,7 @@ public final class UniversalMediaExtractor {
             if (nativeService != null && nativeService.getServiceId() != ServiceList.MediaCCC.getServiceId()) {
                 final LinkType linkType = nativeService.getLinkTypeByUrl(url);
                 if (linkType == LinkType.STREAM) {
-                    final StreamExtractor extractor = nativeService.getStreamExtractor(url);
-                    extractor.fetchPage();
-                    return StreamInfo.extract(extractor);
+                    return StreamInfo.getInfo(nativeService, url);
                 }
             }
         } catch (final Throwable ignored) { }
