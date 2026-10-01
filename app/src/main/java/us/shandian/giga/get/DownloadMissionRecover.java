@@ -80,6 +80,8 @@ public class DownloadMissionRecover extends Thread {
                     if (info != null) {
                         if (!info.getVideoStreams().isEmpty()) {
                             mMission.urls[mMission.current] = info.getVideoStreams().get(0).getContent();
+                        } else if (!info.getVideoOnlyStreams().isEmpty()) {
+                            mMission.urls[mMission.current] = info.getVideoOnlyStreams().get(0).getContent();
                         } else if (!info.getAudioStreams().isEmpty()) {
                             mMission.urls[mMission.current] = info.getAudioStreams().get(0).getContent();
                         }

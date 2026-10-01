@@ -224,7 +224,8 @@ public class DownloadMission extends Mission {
 
         if (url.contains("tiktok") || url.contains("instagram.com") || url.contains("cdninstagram.com")
                 || url.contains("fbcdn.net") || url.contains("facebook.com")
-                || url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")) {
+                || url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")
+                || url.contains("redd.it") || url.contains("reddit.com")) {
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
         } else {
             conn.setRequestProperty("User-Agent", DownloaderImpl.USER_AGENT);
@@ -238,8 +239,11 @@ public class DownloadMission extends Mission {
             conn.setRequestProperty("Referer", "https://www.facebook.com/");
         } else if (url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")) {
             conn.setRequestProperty("Referer", "https://twitter.com/");
+        } else if (url.contains("redd.it") || url.contains("reddit.com")) {
+            conn.setRequestProperty("Referer", "https://www.reddit.com/");
         } else if (source != null && (source.contains("tiktok.com") || source.contains("instagram.com")
-                || source.contains("facebook.com") || source.contains("twitter.com") || source.contains("x.com"))) {
+                || source.contains("facebook.com") || source.contains("twitter.com") || source.contains("x.com")
+                || source.contains("reddit.com") || source.contains("redd.it"))) {
             conn.setRequestProperty("Referer", source);
         }
 

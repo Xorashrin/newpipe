@@ -874,12 +874,28 @@ public class SearchFragment extends BaseListFragment<SearchInfo, ListExtractor.I
                     }, throwable -> showTextError(getString(R.string.unsupported_url))));
             return;
         } catch (final Exception ignored) {
-            // If the query is an HTTP/HTTPS URL not supported natively by NewPipe services,
-            // route to RouterActivity for universal media extraction (social media / any website)
+            // If the query is a URL or social media link, route to RouterActivity
             final String trimmed = theSearchString.trim();
-            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            String urlCandidate = trimmed;
+            if (!urlCandidate.startsWith("http://") && !urlCandidate.startsWith("https://")) {
+                final String lower = urlCandidate.toLowerCase(java.util.Locale.ROOT);
+                if (lower.startsWith("facebook.com/") || lower.startsWith("www.facebook.com/")
+                        || lower.startsWith("m.facebook.com/") || lower.startsWith("fb.watch/")
+                        || lower.startsWith("instagram.com/") || lower.startsWith("www.instagram.com/")
+                        || lower.startsWith("tiktok.com/") || lower.startsWith("www.tiktok.com/")
+                        || lower.startsWith("vm.tiktok.com/") || lower.startsWith("vt.tiktok.com/")
+                        || lower.startsWith("twitter.com/") || lower.startsWith("www.twitter.com/")
+                        || lower.startsWith("x.com/") || lower.startsWith("www.x.com/")
+                        || lower.startsWith("reddit.com/") || lower.startsWith("www.reddit.com/")
+                        || lower.startsWith("v.redd.it/") || lower.startsWith("youtu.be/")
+                        || lower.startsWith("youtube.com/") || lower.startsWith("www.youtube.com/")) {
+                    urlCandidate = "https://" + urlCandidate;
+                }
+            }
+
+            if (urlCandidate.startsWith("http://") || urlCandidate.startsWith("https://")) {
                 getFM().popBackStackImmediate();
-                NavigationHelper.openRouterActivity(activity, trimmed);
+                NavigationHelper.openRouterActivity(activity, urlCandidate);
                 return;
             }
         }

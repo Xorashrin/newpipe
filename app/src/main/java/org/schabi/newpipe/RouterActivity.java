@@ -282,6 +282,9 @@ public class RouterActivity extends AppCompatActivity {
     }
 
     protected void showUnsupportedUrlDialog(final String url) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
         final Context context = getThemeWrapperContext();
         new AlertDialog.Builder(context)
                 .setTitle(R.string.unsupported_url)
@@ -297,22 +300,40 @@ public class RouterActivity extends AppCompatActivity {
     }
 
     private void handleUniversalUrl(final String url) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
         final LoadingDialog loadingDialog = new LoadingDialog(R.string.loading_metadata_title);
-        loadingDialog.show(getSupportFragmentManager(), "universalLoadingDialog");
+        try {
+            loadingDialog.show(getSupportFragmentManager(), "universalLoadingDialog");
+        } catch (final IllegalStateException ignored) { }
 
         disposables.add(UniversalMediaExtractor.extract(url)
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(streamInfo -> {
-                    loadingDialog.dismiss();
+                    if (isFinishing() || isDestroyed()) {
+                        return;
+                    }
+                    try {
+                        loadingDialog.dismiss();
+                    } catch (final Exception ignored) { }
                     showUniversalChoiceDialog(streamInfo);
                 }, throwable -> {
-                    loadingDialog.dismiss();
+                    if (isFinishing() || isDestroyed()) {
+                        return;
+                    }
+                    try {
+                        loadingDialog.dismiss();
+                    } catch (final Exception ignored) { }
                     showUnsupportedUrlDialog(url);
                 }));
     }
 
     private void showUniversalChoiceDialog(final StreamInfo streamInfo) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
         final SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         final String preferredAction = preferences.getString(
                 getString(R.string.preferred_open_action_key),
@@ -414,7 +435,9 @@ public class RouterActivity extends AppCompatActivity {
             radioGroup.getChildAt(i).setOnClickListener(radioButtonsClickListener);
         }
 
-        alertDialogChoice.show();
+        if (!isFinishing() && !isDestroyed()) {
+            alertDialogChoice.show();
+        }
     }
 
     private void handleUniversalChoice(final String key, final StreamInfo streamInfo) {
@@ -430,11 +453,16 @@ public class RouterActivity extends AppCompatActivity {
     }
 
     private void openUniversalDownloadDialog(final StreamInfo streamInfo) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
         if (PermissionHelper.checkStoragePermissions(this,
                 PermissionHelper.DOWNLOAD_DIALOG_REQUEST_CODE)) {
             selectionIsDownload = true;
             final DownloadDialog downloadDialog = new DownloadDialog(this, streamInfo);
-            downloadDialog.show(getSupportFragmentManager(), "downloadDialog");
+            try {
+                downloadDialog.show(getSupportFragmentManager(), "downloadDialog");
+            } catch (final IllegalStateException ignored) { }
         }
     }
 

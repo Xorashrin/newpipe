@@ -31,6 +31,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public final class ListHelper {
@@ -576,6 +578,39 @@ public final class ListHelper {
      * @param videoStreams     the available video streams
      * @return the index of the preferred video stream
      */
+    @NonNull
+    private static String normalizeResolutionNoRefresh(@NonNull final String res) {
+        return res.replace(" HDR", "")
+                .replace(" (HD)", "")
+                .replace(" (SD)", "")
+                .trim()
+                .replaceAll("p\\d+.*$", "p");
+    }
+
+    private static int parseResolutionHeight(@NonNull final String res) {
+        try {
+            final String clean = res.replace(" HDR", "")
+                    .replace(" (HD)", "")
+                    .replace(" (SD)", "")
+                    .trim();
+            final Matcher m = Pattern.compile("(\\d+)p?").matcher(clean);
+            if (m.find()) {
+                return Integer.parseInt(m.group(1));
+            }
+        } catch (final Exception ignored) { }
+        return 0;
+    }
+
+    private static int parseResolutionFps(@NonNull final String res) {
+        try {
+            final Matcher m = Pattern.compile("p(\\d+)").matcher(res);
+            if (m.find()) {
+                return Integer.parseInt(m.group(1));
+            }
+        } catch (final Exception ignored) { }
+        return 30;
+    }
+
     static int getVideoStreamIndex(@NonNull final String targetResolution,
                                    final MediaFormat targetFormat,
                                    @NonNull final List<VideoStream> videoStreams) {
@@ -584,14 +619,14 @@ public final class ListHelper {
         int resMatchOnlyIndex = -1;
         int resMatchOnlyNoRefreshIndex = -1;
         int lowerResMatchNoRefreshIndex = -1;
-        final String targetResolutionNoRefresh = targetResolution.replaceAll("p\\d+.*$", "p");
+        final String targetResolutionNoRefresh = normalizeResolutionNoRefresh(targetResolution);
 
         for (int idx = 0; idx < videoStreams.size(); idx++) {
             final MediaFormat format = targetFormat == null
                     ? null
                     : videoStreams.get(idx).getFormat();
             final String resolution = videoStreams.get(idx).getResolution();
-            final String resolutionNoRefresh = resolution.replaceAll("p\\d+.*$", "p");
+            final String resolutionNoRefresh = normalizeResolutionNoRefresh(resolution);
 
             if (format == targetFormat && resolution.equals(targetResolution)) {
                 fullMatchIndex = idx;
@@ -686,28 +721,27 @@ public final class ListHelper {
     private static int compareVideoStreamResolution(@NonNull final String r1,
                                                     @NonNull final String r2) {
         try {
+            final int h1 = parseResolutionHeight(r1);
+            final int h2 = parseResolutionHeight(r2);
+            if (h1 != h2) {
+                return Integer.compare(h1, h2);
+            }
+
+            final int fps1 = parseResolutionFps(r1);
+            final int fps2 = parseResolutionFps(r2);
+            if (fps1 != fps2) {
+                return Integer.compare(fps1, fps2);
+            }
+
             final boolean isHdr1 = r1.contains("HDR");
             final boolean isHdr2 = r2.contains("HDR");
-            final String clean1 = r1.replace(" HDR", "").trim();
-            final String clean2 = r2.replace(" HDR", "").trim();
-
-            final int res1 = Integer.parseInt(clean1.replaceAll("0p\\d+$", "1")
-                    .replaceAll("[^\\d.]", ""));
-            final int res2 = Integer.parseInt(clean2.replaceAll("0p\\d+$", "1")
-                    .replaceAll("[^\\d.]", ""));
-
-            if (res1 != res2) {
-                return res1 - res2;
-            }
             if (isHdr1 != isHdr2) {
-                return isHdr1 ? 1 : -1;
+                return Boolean.compare(isHdr1, isHdr2);
             }
-            return 0;
-        } catch (final NumberFormatException e) {
-            // Consider the first one greater because we don't know if the two streams are
-            // different or not (a NumberFormatException was thrown so we don't know the resolution
-            // of one stream or of all streams)
-            return 1;
+
+            return r1.compareTo(r2);
+        } catch (final Exception e) {
+            return r1.compareTo(r2);
         }
     }
 

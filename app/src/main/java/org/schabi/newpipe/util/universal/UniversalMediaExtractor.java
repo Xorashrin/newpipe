@@ -15,10 +15,14 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.schabi.newpipe.DownloaderImpl;
 import org.schabi.newpipe.extractor.MediaFormat;
+import org.schabi.newpipe.extractor.NewPipe;
 import org.schabi.newpipe.extractor.ServiceList;
+import org.schabi.newpipe.extractor.StreamingService;
+import org.schabi.newpipe.extractor.StreamingService.LinkType;
 import org.schabi.newpipe.extractor.exceptions.ExtractionException;
 import org.schabi.newpipe.extractor.stream.AudioStream;
 import org.schabi.newpipe.extractor.stream.DeliveryMethod;
+import org.schabi.newpipe.extractor.stream.StreamExtractor;
 import org.schabi.newpipe.extractor.stream.StreamInfo;
 import org.schabi.newpipe.extractor.stream.StreamType;
 import org.schabi.newpipe.extractor.stream.VideoStream;
@@ -85,6 +89,8 @@ public final class UniversalMediaExtractor {
                     Pattern.CASE_INSENSITIVE);
     private static final Pattern DIRECT_HLS_PATTERN =
             Pattern.compile("\\.m3u8(\\?.*)?$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern UNICODE_ESCAPE_PATTERN =
+            Pattern.compile("\\\\u([0-9a-fA-F]{4})");
 
     private UniversalMediaExtractor() { }
 
@@ -105,6 +111,19 @@ public final class UniversalMediaExtractor {
         final OkHttpClient client = DownloaderImpl.getInstance() != null
                 ? DownloaderImpl.getInstance().getClient()
                 : new OkHttpClient();
+
+        // 0. Check if URL belongs to any native NewPipe service (YouTube, SoundCloud, PeerTube, Bandcamp, etc.)
+        try {
+            final StreamingService nativeService = NewPipe.getServiceByUrl(url);
+            if (nativeService != null && nativeService.getServiceId() != ServiceList.MediaCCC.getServiceId()) {
+                final LinkType linkType = nativeService.getLinkTypeByUrl(url);
+                if (linkType == LinkType.STREAM) {
+                    final StreamExtractor extractor = nativeService.getStreamExtractor(url);
+                    extractor.fetchPage();
+                    return StreamInfo.extract(extractor);
+                }
+            }
+        } catch (final Throwable ignored) { }
 
         // 1. Check for direct media URL by extension first
         if (DIRECT_VIDEO_PATTERN.matcher(url).find()
@@ -222,7 +241,7 @@ public final class UniversalMediaExtractor {
                                               @NonNull final String originalUrl) {
         String targetUrl = originalUrl;
         // Unshorten URL if needed (e.g. fb.watch or share links)
-        if (targetUrl.contains("fb.watch") || targetUrl.contains("/share/")) {
+        if (targetUrl.contains("fb.watch") || targetUrl.contains("/share/") || targetUrl.contains("fb.me")) {
             try {
                 final Request headReq = new Request.Builder()
                         .url(targetUrl)
@@ -230,6 +249,12 @@ public final class UniversalMediaExtractor {
                         .build();
                 try (Response headResp = client.newCall(headReq).execute()) {
                     targetUrl = headResp.request().url().toString();
+                    if (targetUrl.contains("fb.watch") || targetUrl.contains("/share/")) {
+                        final String loc = headResp.header("Location");
+                        if (!TextUtils.isEmpty(loc) && isValidMediaUrl(loc)) {
+                            targetUrl = loc;
+                        }
+                    }
                 }
             } catch (final Exception e) {
                 Log.w(TAG, "Failed to resolve Facebook redirect for " + originalUrl, e);
@@ -238,7 +263,11 @@ public final class UniversalMediaExtractor {
 
         // Method A: Facebook Video Plugin Embed API (works reliably without login)
         try {
-            final String encoded = URLEncoder.encode(targetUrl, StandardCharsets.UTF_8.name());
+            String embedTarget = targetUrl;
+            if (embedTarget.contains("m.facebook.com")) {
+                embedTarget = embedTarget.replace("m.facebook.com", "www.facebook.com");
+            }
+            final String encoded = URLEncoder.encode(embedTarget, StandardCharsets.UTF_8.name());
             final String embedUrl = "https://www.facebook.com/plugins/video.php?href=" + encoded;
             final Request embedReq = new Request.Builder()
                     .url(embedUrl)
@@ -336,7 +365,15 @@ public final class UniversalMediaExtractor {
             }
         }
 
-        // 4. Look for OpenGraph video
+        // 4. Look for base_url in Facebook video data
+        if (TextUtils.isEmpty(hdUrl) && TextUtils.isEmpty(sdUrl)) {
+            final Matcher m = Pattern.compile("\"base_url\"\\s*:\\s*\"([^\"]+fbcdn[^\"]+)\"").matcher(html);
+            if (m.find()) {
+                sdUrl = unescapeJsonString(m.group(1));
+            }
+        }
+
+        // 5. Look for OpenGraph video
         if (TextUtils.isEmpty(sdUrl) && TextUtils.isEmpty(hdUrl)) {
             final Document doc = Jsoup.parse(html);
             final Element og = doc.selectFirst("meta[property=og:video], meta[property=og:video:url], "
@@ -368,7 +405,7 @@ public final class UniversalMediaExtractor {
                     .setId("fb_hd")
                     .setContent(hdUrl, true)
                     .setMediaFormat(MediaFormat.MPEG_4)
-                    .setResolution("1080p (HD)")
+                    .setResolution("1080p")
                     .setIsVideoOnly(false)
                     .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
                     .build());
@@ -391,7 +428,7 @@ public final class UniversalMediaExtractor {
                     .setId("fb_sd")
                     .setContent(sdUrl, true)
                     .setMediaFormat(MediaFormat.MPEG_4)
-                    .setResolution("720p (SD)")
+                    .setResolution("720p")
                     .setIsVideoOnly(false)
                     .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
                     .build());
@@ -438,7 +475,20 @@ public final class UniversalMediaExtractor {
     @Nullable
     private static StreamInfo extractInstagram(@NonNull final OkHttpClient client,
                                                @NonNull final String originalUrl) {
-        String cleanUrl = originalUrl.split("\\?")[0];
+        String targetUrl = originalUrl;
+        if (targetUrl.contains("/share/")) {
+            try {
+                final Request shareReq = new Request.Builder()
+                        .url(targetUrl)
+                        .header("User-Agent", MOBILE_USER_AGENT)
+                        .build();
+                try (Response shareResp = client.newCall(shareReq).execute()) {
+                    targetUrl = shareResp.request().url().toString();
+                }
+            } catch (final Exception ignored) { }
+        }
+
+        String cleanUrl = targetUrl.split("\\?")[0];
         if (cleanUrl.endsWith("/")) {
             cleanUrl = cleanUrl.substring(0, cleanUrl.length() - 1);
         }
@@ -455,26 +505,44 @@ public final class UniversalMediaExtractor {
             try (Response resp = client.newCall(req).execute()) {
                 if (resp.body() != null) {
                     final String html = resp.body().string();
+                    final Document doc = Jsoup.parse(html);
 
-                    // Check for EmbeddedVideo tag or video_url
+                    String title = "Instagram Reel";
+                    final Element ogTitle = doc.selectFirst("meta[property=og:title]");
+                    if (ogTitle != null && !TextUtils.isEmpty(ogTitle.attr("content"))) {
+                        title = ogTitle.attr("content");
+                    }
+
+                    // Check for video_url
                     final Matcher videoUrlMatcher = Pattern.compile(
                             "\"video_url\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
                     if (videoUrlMatcher.find()) {
                         final String videoUrl = unescapeJsonString(videoUrlMatcher.group(1));
                         if (isValidMediaUrl(videoUrl)) {
                             probeMediaSize(client, videoUrl, "https://www.instagram.com/");
-                            return createSingleStreamInfo(originalUrl, "Instagram Reel", videoUrl,
+                            return createSingleStreamInfo(originalUrl, title, videoUrl,
                                     MediaFormat.MPEG_4);
                         }
                     }
 
-                    final Document doc = Jsoup.parse(html);
+                    // Check for video_versions array
+                    final Matcher versionsMatcher = Pattern.compile(
+                            "\"video_versions\"\\s*:\\s*\\[\\s*\\{[^}]*\"url\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
+                    if (versionsMatcher.find()) {
+                        final String videoUrl = unescapeJsonString(versionsMatcher.group(1));
+                        if (isValidMediaUrl(videoUrl)) {
+                            probeMediaSize(client, videoUrl, "https://www.instagram.com/");
+                            return createSingleStreamInfo(originalUrl, title, videoUrl,
+                                    MediaFormat.MPEG_4);
+                        }
+                    }
+
                     final Element videoElem = doc.selectFirst("video.EmbeddedVideo, video[src]");
                     if (videoElem != null) {
                         final String src = videoElem.attr("src");
                         if (isValidMediaUrl(src)) {
                             probeMediaSize(client, src, "https://www.instagram.com/");
-                            return createSingleStreamInfo(originalUrl, "Instagram Reel", src,
+                            return createSingleStreamInfo(originalUrl, title, src,
                                     MediaFormat.MPEG_4);
                         }
                     }
@@ -487,7 +555,7 @@ public final class UniversalMediaExtractor {
         // Method B: Crawler User-Agent
         try {
             final Request botReq = new Request.Builder()
-                    .url(originalUrl)
+                    .url(targetUrl)
                     .header("User-Agent", BOT_USER_AGENT)
                     .build();
 
@@ -495,12 +563,17 @@ public final class UniversalMediaExtractor {
                 if (botResp.body() != null) {
                     final String html = botResp.body().string();
                     final Document doc = Jsoup.parse(html);
+                    String title = "Instagram Reel";
+                    final Element ogTitle = doc.selectFirst("meta[property=og:title], meta[name=twitter:title]");
+                    if (ogTitle != null && !TextUtils.isEmpty(ogTitle.attr("content"))) {
+                        title = ogTitle.attr("content");
+                    }
                     final Element ogVideo = doc.selectFirst("meta[property=og:video], "
                             + "meta[property=og:video:secure_url]");
                     if (ogVideo != null && isValidMediaUrl(ogVideo.attr("content"))) {
                         final String src = ogVideo.attr("content");
                         probeMediaSize(client, src, "https://www.instagram.com/");
-                        return createSingleStreamInfo(originalUrl, "Instagram Reel",
+                        return createSingleStreamInfo(originalUrl, title,
                                 src, MediaFormat.MPEG_4);
                     }
                 }
@@ -622,10 +695,29 @@ public final class UniversalMediaExtractor {
                         }
                     }
                 }
+        // Method C: OpenGraph Video / HTML5 Video tags fallback
+        try {
+            final Request htmlReq = new Request.Builder()
+                    .url(canonicalUrl)
+                    .header("User-Agent", BOT_USER_AGENT)
+                    .build();
+
+            try (Response htmlResp = client.newCall(htmlReq).execute()) {
+                if (htmlResp.body() != null) {
+                    final String html = htmlResp.body().string();
+                    final Document doc = Jsoup.parse(html, canonicalUrl);
+                    final Element ogVideo = doc.selectFirst(
+                            "meta[property=og:video:secure_url], meta[property=og:video]");
+                    if (ogVideo != null && isValidMediaUrl(ogVideo.attr("content"))) {
+                        final String playUrl = ogVideo.attr("content");
+                        probeMediaSize(client, playUrl, "https://www.tiktok.com/");
+                        final String title = !TextUtils.isEmpty(doc.title())
+                                ? doc.title().replace(" | TikTok", "") : "TikTok Video";
+                        return createSingleStreamInfo(originalUrl, title, playUrl, MediaFormat.MPEG_4);
+                    }
+                }
             }
-        } catch (final Exception e) {
-            Log.w(TAG, "TikTok script extraction failed", e);
-        }
+        } catch (final Exception ignored) { }
 
         return null;
     }
@@ -674,7 +766,34 @@ public final class UniversalMediaExtractor {
             Log.w(TAG, "FxTwitter extraction failed", e);
         }
 
-        // Method B: Twitter Syndication API
+        // Method B: VxTwitter API fallback
+        try {
+            final Request vxReq = new Request.Builder()
+                    .url("https://api.vxtwitter.com/Twitter/status/" + tweetId)
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .build();
+
+            try (Response vxResp = client.newCall(vxReq).execute()) {
+                if (vxResp.isSuccessful() && vxResp.body() != null) {
+                    final JSONObject json = new JSONObject(vxResp.body().string());
+                    final String title = json.optString("text", "X Video");
+                    final JSONObject media = json.optJSONObject("media");
+                    if (media != null && media.has("videos")) {
+                        final JSONArray videos = media.getJSONArray("videos");
+                        if (videos.length() > 0) {
+                            final String videoUrl = videos.getJSONObject(0).optString("url");
+                            if (isValidMediaUrl(videoUrl)) {
+                                probeMediaSize(client, videoUrl, "https://twitter.com/");
+                                return createSingleStreamInfo(originalUrl, title, videoUrl,
+                                        MediaFormat.MPEG_4);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (final Exception ignored) { }
+
+        // Method C: Twitter Syndication API
         try {
             final Request synReq = new Request.Builder()
                     .url("https://cdn.syndication.twimg.com/tweet-result?id=" + tweetId + "&token=x")
@@ -742,15 +861,19 @@ public final class UniversalMediaExtractor {
                                 .getJSONObject("data");
 
                         final String title = postObj.optString("title", "Reddit Video");
-                        final String fallbackUrl = postObj.optJSONObject("secure_media") != null
-                                && postObj.getJSONObject("secure_media")
-                                .optJSONObject("reddit_video") != null
-                                ? postObj.getJSONObject("secure_media")
-                                .getJSONObject("reddit_video").optString("fallback_url")
-                                : null;
+                        final JSONObject mediaObj = postObj.optJSONObject("secure_media") != null
+                                && postObj.getJSONObject("secure_media").optJSONObject("reddit_video") != null
+                                ? postObj.getJSONObject("secure_media").getJSONObject("reddit_video")
+                                : (postObj.optJSONObject("media") != null
+                                ? postObj.getJSONObject("media").optJSONObject("reddit_video") : null);
 
-                        if (!TextUtils.isEmpty(fallbackUrl)) {
-                            return buildRedditStreamInfo(originalUrl, title, fallbackUrl);
+                        if (mediaObj != null) {
+                            final String fallbackUrl = mediaObj.optString("fallback_url");
+                            final String hlsUrl = mediaObj.optString("hls_url");
+                            final boolean isGif = mediaObj.optBoolean("is_gif", false);
+                            if (!TextUtils.isEmpty(fallbackUrl)) {
+                                return buildRedditStreamInfo(originalUrl, title, fallbackUrl, hlsUrl, isGif);
+                            }
                         }
                     }
                 }
@@ -765,7 +888,9 @@ public final class UniversalMediaExtractor {
     @NonNull
     private static StreamInfo buildRedditStreamInfo(@NonNull final String originalUrl,
                                                     @NonNull final String title,
-                                                    @NonNull final String fallbackUrl) {
+                                                    @NonNull final String fallbackUrl,
+                                                    @Nullable final String hlsUrl,
+                                                    final boolean isGif) {
         final StreamInfo streamInfo = new StreamInfo(
                 ServiceList.MediaCCC.getServiceId(),
                 originalUrl,
@@ -776,12 +901,40 @@ public final class UniversalMediaExtractor {
                 0
         );
 
+        if (!TextUtils.isEmpty(hlsUrl)) {
+            streamInfo.setHlsUrl(hlsUrl);
+        }
+
+        final List<VideoStream> videoStreams = new ArrayList<>();
         final List<VideoStream> videoOnlyStreams = new ArrayList<>();
-        final String baseUrl = fallbackUrl.substring(0, fallbackUrl.lastIndexOf('/'));
+        final String queryParams = fallbackUrl.contains("?")
+                ? fallbackUrl.substring(fallbackUrl.indexOf('?')) : "";
+        final String cleanFallback = fallbackUrl.split("\\?")[0];
+        final String baseUrl = cleanFallback.substring(0, cleanFallback.lastIndexOf('/'));
+
+        if (!TextUtils.isEmpty(hlsUrl)) {
+            videoStreams.add(new VideoStream.Builder()
+                    .setId("reddit_hls")
+                    .setContent(hlsUrl, true)
+                    .setMediaFormat(MediaFormat.MPEG_4)
+                    .setResolution("1080p")
+                    .setIsVideoOnly(false)
+                    .setDeliveryMethod(DeliveryMethod.HLS)
+                    .build());
+        }
+
+        videoOnlyStreams.add(new VideoStream.Builder()
+                .setId("reddit_fallback")
+                .setContent(fallbackUrl, true)
+                .setMediaFormat(MediaFormat.MPEG_4)
+                .setResolution("720p")
+                .setIsVideoOnly(true)
+                .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
+                .build());
 
         final String[] resolutions = {"1080", "720", "480", "360", "240"};
         for (final String res : resolutions) {
-            final String streamUrl = baseUrl + "/DASH_" + res + ".mp4";
+            final String streamUrl = baseUrl + "/DASH_" + res + ".mp4" + queryParams;
             videoOnlyStreams.add(new VideoStream.Builder()
                     .setId("reddit_v_" + res)
                     .setContent(streamUrl, true)
@@ -792,18 +945,31 @@ public final class UniversalMediaExtractor {
                     .build());
         }
 
-        final String audioUrl = baseUrl + "/DASH_AUDIO_128.mp4";
-        final AudioStream audioStream = new AudioStream.Builder()
-                .setId("reddit_a_128")
-                .setContent(audioUrl, true)
-                .setMediaFormat(MediaFormat.M4A)
-                .setAverageBitrate(128)
-                .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
-                .build();
+        final List<AudioStream> audioStreams = new ArrayList<>();
+        if (!isGif) {
+            final String audio128Url = baseUrl + "/DASH_AUDIO_128.mp4" + queryParams;
+            final String audioLegacyUrl = baseUrl + "/DASH_audio.mp4" + queryParams;
 
-        streamInfo.setVideoStreams(Collections.emptyList());
+            audioStreams.add(new AudioStream.Builder()
+                    .setId("reddit_a_128")
+                    .setContent(audio128Url, true)
+                    .setMediaFormat(MediaFormat.M4A)
+                    .setAverageBitrate(128)
+                    .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
+                    .build());
+
+            audioStreams.add(new AudioStream.Builder()
+                    .setId("reddit_a_legacy")
+                    .setContent(audioLegacyUrl, true)
+                    .setMediaFormat(MediaFormat.M4A)
+                    .setAverageBitrate(96)
+                    .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
+                    .build());
+        }
+
+        streamInfo.setVideoStreams(videoStreams);
         streamInfo.setVideoOnlyStreams(videoOnlyStreams);
-        streamInfo.setAudioStreams(Collections.singletonList(audioStream));
+        streamInfo.setAudioStreams(audioStreams);
         streamInfo.setSubtitles(Collections.emptyList());
         return streamInfo;
     }
@@ -898,7 +1064,7 @@ public final class UniversalMediaExtractor {
                     .setId("video_" + index)
                     .setContent(streamUrl, true)
                     .setMediaFormat(vFormat)
-                    .setResolution("1080p (HD)")
+                    .setResolution("1080p")
                     .setIsVideoOnly(false)
                     .setDeliveryMethod(isHls ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
                     .build();
@@ -977,7 +1143,7 @@ public final class UniversalMediaExtractor {
                     .setId("video_0")
                     .setContent(mediaUrl, true)
                     .setMediaFormat(format)
-                    .setResolution("1080p (HD)")
+                    .setResolution("1080p")
                     .setIsVideoOnly(false)
                     .setDeliveryMethod(isHls ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
                     .build();
@@ -1021,7 +1187,7 @@ public final class UniversalMediaExtractor {
                 .setId("video_0")
                 .setContent(videoUrl, true)
                 .setMediaFormat(format)
-                .setResolution("1080p (HD)")
+                .setResolution("1080p")
                 .setIsVideoOnly(false)
                 .setDeliveryMethod(isHls ? DeliveryMethod.HLS : DeliveryMethod.PROGRESSIVE_HTTP)
                 .build();
@@ -1139,10 +1305,22 @@ public final class UniversalMediaExtractor {
 
     @NonNull
     private static String unescapeJsonString(@NonNull final String input) {
-        return input.replace("\\/", "/")
-                .replace("\\u0025", "%")
-                .replace("\\u0026", "&")
-                .replace("&amp;", "&");
+        String result = input.replace("\\/", "/");
+        if (result.contains("\\u")) {
+            final Matcher matcher = UNICODE_ESCAPE_PATTERN.matcher(result);
+            final StringBuffer sb = new StringBuffer();
+            while (matcher.find()) {
+                try {
+                    final int code = Integer.parseInt(matcher.group(1), 16);
+                    matcher.appendReplacement(sb, Matcher.quoteReplacement(String.valueOf((char) code)));
+                } catch (final NumberFormatException e) {
+                    matcher.appendReplacement(sb, Matcher.quoteReplacement(matcher.group(0)));
+                }
+            }
+            matcher.appendTail(sb);
+            result = sb.toString();
+        }
+        return result.replace("&amp;", "&");
     }
 
     @NonNull

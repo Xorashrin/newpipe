@@ -53,7 +53,18 @@ public final class ItagHelper {
                     // 8K Video Only (AV1 / VP9 / MP4)
                     new ItagItem(571, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "4320p60", 60),
                     new ItagItem(402, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "4320p", 30),
+                    new ItagItem(272, ItagType.VIDEO_ONLY, MediaFormat.WEBM, "4320p", 30),
                     new ItagItem(138, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "4320p", 30),
+
+                    // AV1 SDR Video Only (144p - 2160p)
+                    new ItagItem(401, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "2160p60", 60),
+                    new ItagItem(400, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "1440p60", 60),
+                    new ItagItem(399, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "1080p60", 60),
+                    new ItagItem(398, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "720p60", 60),
+                    new ItagItem(397, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "480p", 30),
+                    new ItagItem(396, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "360p", 30),
+                    new ItagItem(395, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "240p", 30),
+                    new ItagItem(394, ItagType.VIDEO_ONLY, MediaFormat.MPEG_4, "144p", 30),
 
                     // HDR VP9.2 (WebM)
                     new ItagItem(337, ItagType.VIDEO_ONLY, MediaFormat.WEBM, "2160p60 HDR", 60),
