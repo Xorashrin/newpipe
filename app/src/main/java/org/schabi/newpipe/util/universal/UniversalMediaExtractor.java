@@ -695,6 +695,9 @@ public final class UniversalMediaExtractor {
                         }
                     }
                 }
+            }
+        } catch (final Exception ignored) { }
+
         // Method C: OpenGraph Video / HTML5 Video tags fallback
         try {
             final Request htmlReq = new Request.Builder()
