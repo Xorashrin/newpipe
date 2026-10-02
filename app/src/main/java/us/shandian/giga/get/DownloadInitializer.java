@@ -54,26 +54,40 @@ public class DownloadInitializer extends Thread {
                     long lowestSize = Long.MAX_VALUE;
 
                     for (int i = 0; i < mMission.urls.length && mMission.running; i++) {
+                        long length = -1;
+                        int code = 200;
                         try {
-                            mConn = mMission.openConnection(mMission.urls[i], true, 0, 0);
+                            mConn = mMission.openConnection(mMission.urls[i], true, -1, -1);
                             mMission.establishConnection(mId, mConn);
+                            code = mConn.getResponseCode();
+                            length = Utility.getTotalContentLength(mConn);
                         } catch (Exception e) {
                             dispose();
-                            mConn = mMission.openConnection(mMission.urls[i], false, 0, 0);
-                            mMission.establishConnection(mId, mConn);
+                            mConn = mMission.openConnection(mMission.urls[i], false, 0, 1);
+                            try {
+                                mMission.establishConnection(mId, mConn);
+                                code = mConn.getResponseCode();
+                                length = Utility.getTotalContentLength(mConn);
+                            } catch (Exception ignored) { }
                         }
-                        dispose();
 
-                        if (Thread.interrupted()) return;
-                        long length = Utility.getTotalContentLength(mConn);
+                        if (length <= 0) {
+                            long cached = org.schabi.newpipe.util.universal.UniversalMediaExtractor.getCachedSize(mMission.urls[i]);
+                            if (cached > 0) {
+                                length = cached;
+                            }
+                        }
 
                         if (i == 0) {
-                            httpCode = mConn.getResponseCode();
+                            httpCode = code;
                             mMission.length = length;
                         }
 
                         if (length > 0) finalLength += length;
                         if (length < lowestSize) lowestSize = length;
+                        dispose();
+
+                        if (Thread.interrupted()) return;
                     }
 
                     mMission.nearLength = finalLength;
@@ -90,20 +104,35 @@ public class DownloadInitializer extends Thread {
                     }
                 } else {
                     // ask for the current resource length
+                    long length = -1;
+                    int code = 200;
                     try {
-                        mConn = mMission.openConnection(true, 0, 0);
+                        mConn = mMission.openConnection(true, -1, -1);
                         mMission.establishConnection(mId, mConn);
+                        code = mConn.getResponseCode();
+                        length = Utility.getTotalContentLength(mConn);
                     } catch (Exception e) {
                         dispose();
-                        mConn = mMission.openConnection(false, 0, 0);
-                        mMission.establishConnection(mId, mConn);
+                        mConn = mMission.openConnection(false, 0, 1);
+                        try {
+                            mMission.establishConnection(mId, mConn);
+                            code = mConn.getResponseCode();
+                            length = Utility.getTotalContentLength(mConn);
+                        } catch (Exception ignored) { }
                     }
+
+                    if (length <= 0 && mMission.urls != null && mMission.current < mMission.urls.length) {
+                        long cached = org.schabi.newpipe.util.universal.UniversalMediaExtractor.getCachedSize(mMission.urls[mMission.current]);
+                        if (cached > 0) {
+                            length = cached;
+                        }
+                    }
+
+                    httpCode = code;
+                    mMission.length = length;
                     dispose();
 
                     if (!mMission.running || Thread.interrupted()) return;
-
-                    httpCode = mConn.getResponseCode();
-                    mMission.length = Utility.getTotalContentLength(mConn);
                 }
 
                 if (mMission.length == 0 || httpCode == 204) {
@@ -112,7 +141,7 @@ public class DownloadInitializer extends Thread {
                 }
 
                 // check for dynamic generated content
-                if (mMission.length == -1 && mConn.getResponseCode() == 200) {
+                if (mMission.length <= 0) {
                     mMission.blocks = new int[0];
                     mMission.length = 0;
                     mMission.unknownLength = true;
@@ -121,24 +150,22 @@ public class DownloadInitializer extends Thread {
                         Log.d(TAG, "falling back (unknown length)");
                     }
                 } else {
-                    // Open again
-                    try {
-                        mConn = mMission.openConnection(true, mMission.length - 10, mMission.length);
-                        mMission.establishConnection(mId, mConn);
-                    } catch (Exception e) {
-                        dispose();
-                        mConn = mMission.openConnection(false, mMission.length - 10, mMission.length);
+                    int rangeHttpCode = httpCode;
+                    if (rangeHttpCode != 206) {
                         try {
+                            mConn = mMission.openConnection(false, mMission.length - 10, mMission.length);
                             mMission.establishConnection(mId, mConn);
+                            rangeHttpCode = mConn.getResponseCode();
                         } catch (Exception ignored) { }
                     }
-                    dispose();
 
-                    if (!mMission.running || Thread.interrupted()) return;
+                    if (!mMission.running || Thread.interrupted()) {
+                        dispose();
+                        return;
+                    }
 
                     synchronized (mMission.LOCK) {
-                        if (mConn.getResponseCode() == 206) {
-
+                        if (rangeHttpCode == 206) {
                             if (mMission.threadCount > 1) {
                                 int count = (int) (mMission.length / DownloadMission.BLOCK_SIZE);
                                 if ((count * DownloadMission.BLOCK_SIZE) < mMission.length) count++;
@@ -151,7 +178,7 @@ public class DownloadInitializer extends Thread {
                             }
 
                             if (DEBUG) {
-                                Log.d(TAG, "http response code = " + mConn.getResponseCode());
+                                Log.d(TAG, "http response code = " + rangeHttpCode);
                             }
                         } else {
                             // Fallback to single thread
@@ -159,35 +186,41 @@ public class DownloadInitializer extends Thread {
                             mMission.unknownLength = false;
 
                             if (DEBUG) {
-                                Log.d(TAG, "falling back due http response code = " + mConn.getResponseCode());
+                                Log.d(TAG, "falling back due http response code = " + rangeHttpCode);
                             }
                         }
                     }
 
+                    dispose();
                     if (!mMission.running || Thread.interrupted()) return;
                 }
 
-                try (SharpStream fs = mMission.storage.getStream()) {
-                    fs.setLength(mMission.offsets[mMission.current] + mMission.length);
-                    fs.seek(mMission.offsets[mMission.current]);
+                if (!mMission.unknownLength && mMission.length > 0) {
+                    try (SharpStream fs = mMission.storage.getStream()) {
+                        fs.setLength(mMission.offsets[mMission.current] + mMission.length);
+                        fs.seek(mMission.offsets[mMission.current]);
+                    }
                 }
 
                 if (!mMission.running || Thread.interrupted()) return;
 
-                if (!mMission.unknownLength && mMission.recoveryInfo != null) {
-                    String entityTag = mConn.getHeaderField("ETAG");
-                    String lastModified = mConn.getHeaderField("Last-Modified");
-                    MissionRecoveryInfo recovery = mMission.recoveryInfo[mMission.current];
+                if (!mMission.unknownLength && mMission.recoveryInfo != null && mConn != null) {
+                    try {
+                        String entityTag = mConn.getHeaderField("ETAG");
+                        String lastModified = mConn.getHeaderField("Last-Modified");
+                        MissionRecoveryInfo recovery = mMission.recoveryInfo[mMission.current];
 
-                    if (!TextUtils.isEmpty(entityTag)) {
-                        recovery.setValidateCondition(entityTag);
-                    } else if (!TextUtils.isEmpty(lastModified)) {
-                        recovery.setValidateCondition(lastModified);// Note: this is less precise
-                    } else {
-                        recovery.setValidateCondition(null);
-                    }
+                        if (!TextUtils.isEmpty(entityTag)) {
+                            recovery.setValidateCondition(entityTag);
+                        } else if (!TextUtils.isEmpty(lastModified)) {
+                            recovery.setValidateCondition(lastModified);// Note: this is less precise
+                        } else {
+                            recovery.setValidateCondition(null);
+                        }
+                    } catch (Exception ignored) { }
                 }
 
+                dispose();
                 mMission.running = false;
                 break;
             } catch (InterruptedIOException | ClosedByInterruptException e) {

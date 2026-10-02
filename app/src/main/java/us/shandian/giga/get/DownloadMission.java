@@ -218,49 +218,86 @@ public class DownloadMission extends Mission {
         return openConnection(urls[current], headRequest, rangeStart, rangeEnd);
     }
 
-    HttpURLConnection openConnection(String url, boolean headRequest, long rangeStart, long rangeEnd) throws IOException {
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-        conn.setInstanceFollowRedirects(true);
+    private boolean isSocialOrCdnUrl(String u) {
+        if (u == null) return false;
+        final String lower = u.toLowerCase();
+        return lower.contains("tiktok") || lower.contains("byteoversea") || lower.contains("ibytedtos")
+                || lower.contains("instagram.com") || lower.contains("cdninstagram.com")
+                || lower.contains("facebook.com") || lower.contains("fbcdn.net") || lower.contains("fbsbx.com")
+                || lower.contains("twitter.com") || lower.contains("twimg.com") || lower.contains("x.com")
+                || lower.contains("reddit.com") || lower.contains("redd.it") || lower.contains("redditmedia.com");
+    }
 
-        if (url.contains("tiktok") || url.contains("instagram.com") || url.contains("cdninstagram.com")
-                || url.contains("fbcdn.net") || url.contains("facebook.com")
-                || url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")
-                || url.contains("redd.it") || url.contains("reddit.com")) {
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
-        } else {
-            conn.setRequestProperty("User-Agent", DownloaderImpl.USER_AGENT);
-        }
-
-        if (url.contains("tiktok")) {
+    private void applyRefererHeader(HttpURLConnection conn, String u) {
+        if (u == null) return;
+        final String lower = u.toLowerCase();
+        if (lower.contains("tiktok") || lower.contains("byteoversea") || lower.contains("ibytedtos")) {
             conn.setRequestProperty("Referer", "https://www.tiktok.com/");
-        } else if (url.contains("instagram.com") || url.contains("cdninstagram.com")) {
+        } else if (lower.contains("instagram.com") || lower.contains("cdninstagram.com")) {
             conn.setRequestProperty("Referer", "https://www.instagram.com/");
-        } else if (url.contains("fbcdn.net") || url.contains("facebook.com")) {
+        } else if (lower.contains("facebook.com") || lower.contains("fbcdn.net") || lower.contains("fbsbx.com")) {
             conn.setRequestProperty("Referer", "https://www.facebook.com/");
-        } else if (url.contains("twimg.com") || url.contains("twitter.com") || url.contains("x.com")) {
+        } else if (lower.contains("twitter.com") || lower.contains("twimg.com") || lower.contains("x.com")) {
             conn.setRequestProperty("Referer", "https://twitter.com/");
-        } else if (url.contains("redd.it") || url.contains("reddit.com")) {
+        } else if (lower.contains("reddit.com") || lower.contains("redd.it") || lower.contains("redditmedia.com")) {
             conn.setRequestProperty("Referer", "https://www.reddit.com/");
-        } else if (source != null && (source.contains("tiktok.com") || source.contains("instagram.com")
-                || source.contains("facebook.com") || source.contains("twitter.com") || source.contains("x.com")
-                || source.contains("reddit.com") || source.contains("redd.it"))) {
+        } else if (source != null && isSocialOrCdnUrl(source)) {
             conn.setRequestProperty("Referer", source);
         }
+    }
 
-        conn.setRequestProperty("Accept", "*/*");
-        conn.setRequestProperty("Accept-Encoding", "*");
+    HttpURLConnection openConnection(String url, boolean headRequest, long rangeStart, long rangeEnd) throws IOException {
+        String currentUrl = url;
+        HttpURLConnection conn = null;
 
-        if (headRequest) conn.setRequestMethod("HEAD");
+        for (int redirects = 0; redirects < 8; redirects++) {
+            conn = (HttpURLConnection) new URL(currentUrl).openConnection();
+            conn.setInstanceFollowRedirects(true);
 
-        // BUG workaround: switching between networks can freeze the download forever
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(30000);
+            if (isSocialOrCdnUrl(currentUrl) || isSocialOrCdnUrl(source)) {
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
+            } else {
+                conn.setRequestProperty("User-Agent", DownloaderImpl.USER_AGENT);
+            }
 
-        if (rangeStart >= 0) {
-            String req = "bytes=" + rangeStart + "-";
-            if (rangeEnd > 0) req += rangeEnd;
+            applyRefererHeader(conn, currentUrl);
 
-            conn.setRequestProperty("Range", req);
+            conn.setRequestProperty("Accept", "*/*");
+            conn.setRequestProperty("Accept-Encoding", "identity");
+
+            if (headRequest) conn.setRequestMethod("HEAD");
+
+            // BUG workaround: switching between networks can freeze the download forever
+            conn.setConnectTimeout(30000);
+            conn.setReadTimeout(30000);
+
+            if (rangeStart >= 0) {
+                String req = "bytes=" + rangeStart + "-";
+                if (rangeEnd >= rangeStart) req += rangeEnd;
+
+                conn.setRequestProperty("Range", req);
+            }
+
+            final int responseCode = conn.getResponseCode();
+            if (responseCode == HttpURLConnection.HTTP_MOVED_PERM
+                    || responseCode == HttpURLConnection.HTTP_MOVED_TEMP
+                    || responseCode == HttpURLConnection.HTTP_SEE_OTHER
+                    || responseCode == 307
+                    || responseCode == 308) {
+                final String location = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (location != null && !location.isEmpty()) {
+                    final URL base = new URL(currentUrl);
+                    currentUrl = new URL(base, location).toExternalForm();
+                    for (int i = 0; i < urls.length; i++) {
+                        if (url.equals(urls[i])) {
+                            urls[i] = currentUrl;
+                        }
+                    }
+                    continue;
+                }
+            }
+            break;
         }
 
         return conn;

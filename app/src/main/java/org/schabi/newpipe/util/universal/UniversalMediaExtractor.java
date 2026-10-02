@@ -310,6 +310,26 @@ public final class UniversalMediaExtractor {
             Log.w(TAG, "Facebook Crawler extraction failed", e);
         }
 
+        // Method C: Direct Request with Browser User-Agent
+        try {
+            final Request pageReq = new Request.Builder()
+                    .url(targetUrl)
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .build();
+
+            try (Response pageResp = client.newCall(pageReq).execute()) {
+                if (pageResp.body() != null) {
+                    final String html = pageResp.body().string();
+                    final StreamInfo info = parseFacebookEmbedHtml(client, originalUrl, html);
+                    if (info != null) {
+                        return info;
+                    }
+                }
+            }
+        } catch (final Exception ignored) { }
+
         return null;
     }
 
@@ -371,7 +391,15 @@ public final class UniversalMediaExtractor {
             }
         }
 
-        // 5. Look for OpenGraph video
+        // 5. Look for application/ld+json contentUrl
+        if (TextUtils.isEmpty(sdUrl) && TextUtils.isEmpty(hdUrl)) {
+            final Matcher cuMatcher = Pattern.compile("\"contentUrl\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
+            if (cuMatcher.find()) {
+                sdUrl = unescapeJsonString(cuMatcher.group(1));
+            }
+        }
+
+        // 6. Look for OpenGraph video
         if (TextUtils.isEmpty(sdUrl) && TextUtils.isEmpty(hdUrl)) {
             final Document doc = Jsoup.parse(html);
             final Element og = doc.selectFirst("meta[property=og:video], meta[property=og:video:url], "
@@ -491,7 +519,27 @@ public final class UniversalMediaExtractor {
             cleanUrl = cleanUrl.substring(0, cleanUrl.length() - 1);
         }
 
-        // Method A: Instagram Embed URL
+        // Method A: Direct page request with browser User-Agent
+        try {
+            final Request pageReq = new Request.Builder()
+                    .url(cleanUrl + "/")
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .build();
+
+            try (Response pageResp = client.newCall(pageReq).execute()) {
+                if (pageResp.body() != null) {
+                    final String html = pageResp.body().string();
+                    final StreamInfo info = parseInstagramHtml(client, originalUrl, html);
+                    if (info != null) {
+                        return info;
+                    }
+                }
+            }
+        } catch (final Exception ignored) { }
+
+        // Method B: Instagram Embed captioned
         try {
             final String embedUrl = cleanUrl + "/embed/captioned/";
             final Request req = new Request.Builder()
@@ -503,80 +551,129 @@ public final class UniversalMediaExtractor {
             try (Response resp = client.newCall(req).execute()) {
                 if (resp.body() != null) {
                     final String html = resp.body().string();
-                    final Document doc = Jsoup.parse(html);
-
-                    String title = "Instagram Reel";
-                    final Element ogTitle = doc.selectFirst("meta[property=og:title]");
-                    if (ogTitle != null && !TextUtils.isEmpty(ogTitle.attr("content"))) {
-                        title = ogTitle.attr("content");
-                    }
-
-                    // Check for video_url
-                    final Matcher videoUrlMatcher = Pattern.compile(
-                            "\"video_url\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
-                    if (videoUrlMatcher.find()) {
-                        final String videoUrl = unescapeJsonString(videoUrlMatcher.group(1));
-                        if (isValidMediaUrl(videoUrl)) {
-                            probeMediaSize(client, videoUrl, "https://www.instagram.com/");
-                            return createSingleStreamInfo(originalUrl, title, videoUrl,
-                                    MediaFormat.MPEG_4);
-                        }
-                    }
-
-                    // Check for video_versions array
-                    final Matcher versionsMatcher = Pattern.compile(
-                            "\"video_versions\"\\s*:\\s*\\[\\s*\\{[^}]*\"url\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
-                    if (versionsMatcher.find()) {
-                        final String videoUrl = unescapeJsonString(versionsMatcher.group(1));
-                        if (isValidMediaUrl(videoUrl)) {
-                            probeMediaSize(client, videoUrl, "https://www.instagram.com/");
-                            return createSingleStreamInfo(originalUrl, title, videoUrl,
-                                    MediaFormat.MPEG_4);
-                        }
-                    }
-
-                    final Element videoElem = doc.selectFirst("video.EmbeddedVideo, video[src]");
-                    if (videoElem != null) {
-                        final String src = videoElem.attr("src");
-                        if (isValidMediaUrl(src)) {
-                            probeMediaSize(client, src, "https://www.instagram.com/");
-                            return createSingleStreamInfo(originalUrl, title, src,
-                                    MediaFormat.MPEG_4);
-                        }
+                    final StreamInfo info = parseInstagramHtml(client, originalUrl, html);
+                    if (info != null) {
+                        return info;
                     }
                 }
             }
-        } catch (final Exception e) {
-            Log.w(TAG, "Instagram embed extraction failed", e);
-        }
+        } catch (final Exception ignored) { }
 
-        // Method B: Crawler User-Agent
+        // Method C: Instagram Embed standard
+        try {
+            final String embedUrl = cleanUrl + "/embed/";
+            final Request req = new Request.Builder()
+                    .url(embedUrl)
+                    .header("User-Agent", BROWSER_USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .build();
+
+            try (Response resp = client.newCall(req).execute()) {
+                if (resp.body() != null) {
+                    final String html = resp.body().string();
+                    final StreamInfo info = parseInstagramHtml(client, originalUrl, html);
+                    if (info != null) {
+                        return info;
+                    }
+                }
+            }
+        } catch (final Exception ignored) { }
+
+        // Method D: Crawler User-Agent
         try {
             final Request botReq = new Request.Builder()
                     .url(targetUrl)
                     .header("User-Agent", BOT_USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .build();
 
             try (Response botResp = client.newCall(botReq).execute()) {
                 if (botResp.body() != null) {
                     final String html = botResp.body().string();
-                    final Document doc = Jsoup.parse(html);
-                    String title = "Instagram Reel";
-                    final Element ogTitle = doc.selectFirst("meta[property=og:title], meta[name=twitter:title]");
-                    if (ogTitle != null && !TextUtils.isEmpty(ogTitle.attr("content"))) {
-                        title = ogTitle.attr("content");
-                    }
-                    final Element ogVideo = doc.selectFirst("meta[property=og:video], "
-                            + "meta[property=og:video:secure_url]");
-                    if (ogVideo != null && isValidMediaUrl(ogVideo.attr("content"))) {
-                        final String src = ogVideo.attr("content");
-                        probeMediaSize(client, src, "https://www.instagram.com/");
-                        return createSingleStreamInfo(originalUrl, title,
-                                src, MediaFormat.MPEG_4);
+                    final StreamInfo info = parseInstagramHtml(client, originalUrl, html);
+                    if (info != null) {
+                        return info;
                     }
                 }
             }
         } catch (final Exception ignored) { }
+
+        return null;
+    }
+
+    @Nullable
+    private static StreamInfo parseInstagramHtml(@NonNull final OkHttpClient client,
+                                                 @NonNull final String originalUrl,
+                                                 @NonNull final String html) {
+        final Document doc = Jsoup.parse(html);
+        String title = "Instagram Reel";
+        final Element ogTitle = doc.selectFirst("meta[property=og:title], meta[name=twitter:title]");
+        if (ogTitle != null && !TextUtils.isEmpty(ogTitle.attr("content"))) {
+            title = ogTitle.attr("content");
+        } else if (!TextUtils.isEmpty(doc.title())) {
+            title = doc.title().replace(" | Instagram", "").trim();
+        }
+
+        // 1. Check application/ld+json
+        for (final Element script : doc.select("script[type=application/ld+json]")) {
+            try {
+                final String jsonStr = script.data();
+                if (jsonStr.contains("contentUrl")) {
+                    final Matcher cuMatcher = Pattern.compile("\"contentUrl\"\\s*:\\s*\"([^\"]+)\"").matcher(jsonStr);
+                    if (cuMatcher.find()) {
+                        final String vUrl = unescapeJsonString(cuMatcher.group(1));
+                        if (isValidMediaUrl(vUrl)) {
+                            probeMediaSize(client, vUrl, "https://www.instagram.com/");
+                            return createSingleStreamInfo(originalUrl, title, vUrl, MediaFormat.MPEG_4);
+                        }
+                    }
+                }
+            } catch (final Exception ignored) { }
+        }
+
+        // 2. Check video_url regex
+        final Matcher videoUrlMatcher = Pattern.compile(
+                "\"video_url\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
+        if (videoUrlMatcher.find()) {
+            final String videoUrl = unescapeJsonString(videoUrlMatcher.group(1));
+            if (isValidMediaUrl(videoUrl)) {
+                probeMediaSize(client, videoUrl, "https://www.instagram.com/");
+                return createSingleStreamInfo(originalUrl, title, videoUrl,
+                        MediaFormat.MPEG_4);
+            }
+        }
+
+        // 3. Check video_versions array
+        final Matcher versionsMatcher = Pattern.compile(
+                "\"video_versions\"\\s*:\\s*\\[\\s*\\{[^}]*\"url\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
+        if (versionsMatcher.find()) {
+            final String videoUrl = unescapeJsonString(versionsMatcher.group(1));
+            if (isValidMediaUrl(videoUrl)) {
+                probeMediaSize(client, videoUrl, "https://www.instagram.com/");
+                return createSingleStreamInfo(originalUrl, title, videoUrl,
+                        MediaFormat.MPEG_4);
+            }
+        }
+
+        // 4. Check OpenGraph video
+        final Element ogVideo = doc.selectFirst("meta[property=og:video], "
+                + "meta[property=og:video:secure_url], meta[property=og:video:url]");
+        if (ogVideo != null && isValidMediaUrl(ogVideo.attr("content"))) {
+            final String src = ogVideo.attr("content");
+            probeMediaSize(client, src, "https://www.instagram.com/");
+            return createSingleStreamInfo(originalUrl, title, src, MediaFormat.MPEG_4);
+        }
+
+        // 5. Check HTML5 Video tags
+        final Element videoElem = doc.selectFirst("video.EmbeddedVideo, video[src]");
+        if (videoElem != null) {
+            final String src = videoElem.attr("src");
+            if (isValidMediaUrl(src)) {
+                probeMediaSize(client, src, "https://www.instagram.com/");
+                return createSingleStreamInfo(originalUrl, title, src,
+                        MediaFormat.MPEG_4);
+            }
+        }
 
         return null;
     }
@@ -735,10 +832,10 @@ public final class UniversalMediaExtractor {
         }
         final String tweetId = matcher.group(1);
 
-        // Method A: FxTwitter API
+        // Method A: FxTwitter / FixTweet API
         try {
             final Request fxReq = new Request.Builder()
-                    .url("https://api.fxtwitter.com/status/" + tweetId)
+                    .url("https://api.fxtwitter.com/i/status/" + tweetId)
                     .header("User-Agent", BROWSER_USER_AGENT)
                     .build();
 
@@ -749,16 +846,30 @@ public final class UniversalMediaExtractor {
                     if (tweet != null) {
                         final String title = tweet.optString("text", "X Video");
                         final JSONObject media = tweet.optJSONObject("media");
-                        if (media != null && media.has("videos")) {
-                            final JSONArray videos = media.getJSONArray("videos");
-                            if (videos.length() > 0) {
-                                final String videoUrl = videos.getJSONObject(0).optString("url");
-                                if (isValidMediaUrl(videoUrl)) {
-                                    probeMediaSize(client, videoUrl, "https://twitter.com/");
-                                    return createSingleStreamInfo(originalUrl, title, videoUrl,
-                                            MediaFormat.MPEG_4);
+                        String videoUrl = null;
+                        if (media != null) {
+                            if (media.has("videos")) {
+                                final JSONArray videos = media.getJSONArray("videos");
+                                if (videos.length() > 0) {
+                                    videoUrl = videos.getJSONObject(0).optString("url");
                                 }
                             }
+                            if (TextUtils.isEmpty(videoUrl) && media.has("all")) {
+                                final JSONArray all = media.getJSONArray("all");
+                                for (int i = 0; i < all.length(); i++) {
+                                    final JSONObject item = all.getJSONObject(i);
+                                    final String type = item.optString("type");
+                                    if ("video".equalsIgnoreCase(type) || "gif".equalsIgnoreCase(type)) {
+                                        videoUrl = item.optString("url");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (isValidMediaUrl(videoUrl)) {
+                            probeMediaSize(client, videoUrl, "https://twitter.com/");
+                            return createSingleStreamInfo(originalUrl, title, videoUrl,
+                                    MediaFormat.MPEG_4);
                         }
                     }
                 }
@@ -778,23 +889,47 @@ public final class UniversalMediaExtractor {
                 if (vxResp.isSuccessful() && vxResp.body() != null) {
                     final JSONObject json = new JSONObject(vxResp.body().string());
                     final String title = json.optString("text", "X Video");
-                    final JSONObject media = json.optJSONObject("media");
-                    if (media != null && media.has("videos")) {
-                        final JSONArray videos = media.getJSONArray("videos");
-                        if (videos.length() > 0) {
-                            final String videoUrl = videos.getJSONObject(0).optString("url");
-                            if (isValidMediaUrl(videoUrl)) {
-                                probeMediaSize(client, videoUrl, "https://twitter.com/");
-                                return createSingleStreamInfo(originalUrl, title, videoUrl,
-                                        MediaFormat.MPEG_4);
+                    String videoUrl = null;
+                    if (json.has("media_extended")) {
+                        final JSONArray ext = json.getJSONArray("media_extended");
+                        for (int i = 0; i < ext.length(); i++) {
+                            final JSONObject item = ext.getJSONObject(i);
+                            final String type = item.optString("type");
+                            if ("video".equalsIgnoreCase(type) || "gif".equalsIgnoreCase(type)) {
+                                videoUrl = item.optString("url");
+                                break;
                             }
                         }
+                    }
+                    if (TextUtils.isEmpty(videoUrl) && json.has("mediaURLs")) {
+                        final JSONArray urls = json.getJSONArray("mediaURLs");
+                        for (int i = 0; i < urls.length(); i++) {
+                            final String u = urls.getString(i);
+                            if (u.contains(".mp4") || u.contains("video.twimg.com")) {
+                                videoUrl = u;
+                                break;
+                            }
+                        }
+                    }
+                    if (TextUtils.isEmpty(videoUrl)) {
+                        final JSONObject media = json.optJSONObject("media");
+                        if (media != null && media.has("videos")) {
+                            final JSONArray videos = media.getJSONArray("videos");
+                            if (videos.length() > 0) {
+                                videoUrl = videos.getJSONObject(0).optString("url");
+                            }
+                        }
+                    }
+                    if (isValidMediaUrl(videoUrl)) {
+                        probeMediaSize(client, videoUrl, "https://twitter.com/");
+                        return createSingleStreamInfo(originalUrl, title, videoUrl,
+                                MediaFormat.MPEG_4);
                     }
                 }
             }
         } catch (final Exception ignored) { }
 
-        // Method C: Twitter Syndication API
+        // Method C: Twitter Syndication API fallback
         try {
             final Request synReq = new Request.Builder()
                     .url("https://cdn.syndication.twimg.com/tweet-result?id=" + tweetId + "&token=x")
@@ -873,6 +1008,7 @@ public final class UniversalMediaExtractor {
                             final String hlsUrl = mediaObj.optString("hls_url");
                             final boolean isGif = mediaObj.optBoolean("is_gif", false);
                             if (!TextUtils.isEmpty(fallbackUrl)) {
+                                probeMediaSize(client, fallbackUrl, "https://www.reddit.com/");
                                 return buildRedditStreamInfo(originalUrl, title, fallbackUrl, hlsUrl, isGif);
                             }
                         }
@@ -912,6 +1048,17 @@ public final class UniversalMediaExtractor {
                 ? fallbackUrl.substring(fallbackUrl.indexOf('?')) : "";
         final String cleanFallback = fallbackUrl.split("\\?")[0];
         final String baseUrl = cleanFallback.substring(0, cleanFallback.lastIndexOf('/'));
+
+        if (!TextUtils.isEmpty(fallbackUrl)) {
+            videoStreams.add(new VideoStream.Builder()
+                    .setId("reddit_progressive")
+                    .setContent(fallbackUrl, true)
+                    .setMediaFormat(MediaFormat.MPEG_4)
+                    .setResolution("720p")
+                    .setIsVideoOnly(false)
+                    .setDeliveryMethod(DeliveryMethod.PROGRESSIVE_HTTP)
+                    .build());
+        }
 
         if (!TextUtils.isEmpty(hlsUrl)) {
             videoStreams.add(new VideoStream.Builder()
@@ -1242,7 +1389,11 @@ public final class UniversalMediaExtractor {
                         try {
                             final long len = Long.parseLong(cl);
                             if (len > 0) {
+                                final String finalUrl = resp.request().url().toString();
                                 cacheSize(mediaUrl, len);
+                                if (!finalUrl.equals(mediaUrl)) {
+                                    cacheSize(finalUrl, len);
+                                }
                                 return len;
                             }
                         } catch (final NumberFormatException ignored) { }
@@ -1263,6 +1414,7 @@ public final class UniversalMediaExtractor {
                 rb.header("Referer", referer);
             }
             try (Response resp = client.newCall(rb.build()).execute()) {
+                final String finalUrl = resp.request().url().toString();
                 final String cr = resp.header("Content-Range");
                 if (!TextUtils.isEmpty(cr) && cr.contains("/")) {
                     final String totalStr = cr.substring(cr.lastIndexOf('/') + 1).trim();
@@ -1270,6 +1422,9 @@ public final class UniversalMediaExtractor {
                         final long len = Long.parseLong(totalStr);
                         if (len > 0) {
                             cacheSize(mediaUrl, len);
+                            if (!finalUrl.equals(mediaUrl)) {
+                                cacheSize(finalUrl, len);
+                            }
                             return len;
                         }
                     } catch (final NumberFormatException ignored) { }
@@ -1281,6 +1436,9 @@ public final class UniversalMediaExtractor {
                             final long len = Long.parseLong(cl);
                             if (len > 0) {
                                 cacheSize(mediaUrl, len);
+                                if (!finalUrl.equals(mediaUrl)) {
+                                    cacheSize(finalUrl, len);
+                                }
                                 return len;
                             }
                         } catch (final NumberFormatException ignored) { }
